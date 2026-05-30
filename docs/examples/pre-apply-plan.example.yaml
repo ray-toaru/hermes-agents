@@ -1,0 +1,45 @@
+schema_version: 1
+plan_id: 20260530T000000Z_agentops_aaaaaaaaaa_preapply
+change_id: 20260530T000000Z_agentops_aaaaaaaaaa
+agent: agentops
+generated_at: "2026-05-30T00:00:00Z"
+mutation_enabled: false
+base_commit: 0000000000000000000000000000000000000000
+proposal_diff_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+gates:
+  policy_valid: true
+  proposal_valid: true
+  approvals_valid: true
+  diff_hash_valid: true
+  path_scope_valid: true
+  git_clean_required: true
+  patch_applicable_required: true
+  manual_operator_confirmation_required: true
+lock:
+  required: true
+  scope: repository
+  mode: exclusive
+  stale_after_seconds: 900
+  note: Future apply must acquire one exclusive repository-level lock before mutation.
+rollback:
+  required: true
+  strategy: git_first
+  pre_apply_commit_required: true
+  note: Future apply must record HEAD before mutation and support reverting the resulting commit.
+post_apply_validation:
+  required: true
+  commands:
+    - python scripts/hermes-agentops validate-schemas
+    - python scripts/hermes-agentops validate -v
+    - pytest -q
+audit:
+  required: true
+  record_path: changes/20260530T000000Z_agentops_aaaaaaaaaa/pre-apply-plan.yaml
+  include_stdout_stderr: true
+  include_exit_codes: true
+  include_git_head_before_after: true
+failure_recovery:
+  abort_on_first_failure: true
+  rollback_on_partial_mutation: true
+  leave_lock_for_manual_recovery: true
+  note: Future apply must fail closed and preserve evidence for manual inspection.
