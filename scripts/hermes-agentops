@@ -21,19 +21,17 @@ from typing import Any
 
 try:
     import yaml
-except Exception:  # pragma: no cover - dependency errors are reported at runtime
+except Exception:  # pragma: no cover
     yaml = None
 
 try:
     import jsonschema
-except Exception:  # pragma: no cover - schema validation is best effort without dependency
+except Exception:  # pragma: no cover
     jsonschema = None
-
 
 REQUIRED_PROFILE_FILES = ["SOUL.md", "config.yaml", "manifest.yaml"]
 FORBIDDEN_FILENAMES = {".env", "state.db", "secrets.json"}
 RUNTIME_PATH_PARTS = {"logs", "sessions", "workspace", "workspaces"}
-
 DEFAULT_GLOBAL_FORBIDDEN = {
     "read_secret_values",
     "execute_business_actions",
@@ -43,7 +41,6 @@ DEFAULT_GLOBAL_FORBIDDEN = {
     "bypass_hermes_tool_registry",
 }
 DEFAULT_RISK_APPROVALS = {"low": 1, "medium": 1, "high": 2, "critical": 2}
-
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
 RFC3339_DATE_TIME_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
@@ -51,8 +48,6 @@ RFC3339_DATE_TIME_RE = re.compile(
 
 
 class ChangeValidation:
-    """Collected validation state for one change record."""
-
     def __init__(self) -> None:
         self.errors: list[str] = []
         self.proposal: dict[str, Any] | None = None
@@ -96,9 +91,7 @@ def slug(value: str) -> str:
 
 
 def is_rfc3339_date_time(value: Any) -> bool:
-    if not isinstance(value, str):
-        return False
-    if not RFC3339_DATE_TIME_RE.match(value):
+    if not isinstance(value, str) or not RFC3339_DATE_TIME_RE.match(value):
         return False
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -115,7 +108,6 @@ def validate_required_date_time(value: Any, errors: list[str], label: str) -> No
 def build_format_checker():
     if jsonschema is None:
         return None
-
     checker = jsonschema.FormatChecker()
 
     @checker.checks("date-time")
@@ -130,14 +122,10 @@ def validate_with_schema(instance: Any, schema_path: Path, label: str) -> list[s
         return [f"[CRIT] schema.{label}: missing {schema_path}"]
     if jsonschema is None:
         return []
-
     try:
         schema = load_json(schema_path)
         jsonschema.Draft202012Validator.check_schema(schema)
-        validator = jsonschema.Draft202012Validator(
-            schema,
-            format_checker=build_format_checker(),
-        )
+        validator = jsonschema.Draft202012Validator(schema, format_checker=build_format_checker())
         errors: list[str] = []
         for error in sorted(validator.iter_errors(instance), key=lambda item: list(item.path)):
             path = ".".join(str(part) for part in error.path) or "<root>"
@@ -162,28 +150,17 @@ def load_policy(root: Path) -> dict[str, Any]:
 
 
 def global_forbidden(root: Path) -> set[str]:
-    values = load_policy(root).get("global_forbidden") or []
-    return set(values) | DEFAULT_GLOBAL_FORBIDDEN
+    return set(load_policy(root).get("global_forbidden") or []) | DEFAULT_GLOBAL_FORBIDDEN
 
 
 def risk_approvals(root: Path) -> dict[str, int]:
-    """Return effective thresholds.
-
-    validate_policy() is the fail-closed gate. This helper intentionally keeps
-    the old fallback behavior so display commands can still explain broken
-    records rather than crashing.
-    """
-
-    path = policy_path(root)
-    if not path.exists():
+    if not policy_path(root).exists():
         return dict(DEFAULT_RISK_APPROVALS)
-
     defaults = load_policy(root).get("risk_defaults") or {}
     thresholds: dict[str, int] = {}
     for risk, fallback in DEFAULT_RISK_APPROVALS.items():
-        key = f"{risk}_required_approvals"
         try:
-            thresholds[risk] = max(1, int(defaults.get(key, fallback)))
+            thresholds[risk] = max(1, int(defaults.get(f"{risk}_required_approvals", fallback)))
         except Exception:
             thresholds[risk] = fallback
     return thresholds
@@ -203,20 +180,30 @@ def effective_policy(root: Path) -> dict[str, Any]:
     }
 
 
+def validate_policy_pattern(pattern: Any) -> list[str]:
+    if not isinstance(pattern, str) or not pattern:
+        return [f"[CRIT] policy.critical_change_paths: invalid pattern {pattern!r}"]
+    errors: list[str] = []
+    if pattern.startswith("/") or PurePosixPath(pattern).is_absolute():
+        errors.append(f"[CRIT] policy.critical_change_paths: absolute pattern rejected: {pattern}")
+    if "\\" in pattern:
+        errors.append(f"[CRIT] policy.critical_change_paths: backslash pattern rejected: {pattern}")
+    if any(part in {"", ".", ".."} for part in pattern.split("/")):
+        errors.append(f"[CRIT] policy.critical_change_paths: traversal or empty segment rejected: {pattern}")
+    return errors
+
+
 def validate_policy(root: Path) -> list[str]:
     path = policy_path(root)
     if not path.exists():
         return [f"[CRIT] policy.exists: missing {path}"]
-
     try:
         data = load_policy(root)
     except Exception as exc:
         return [f"[CRIT] policy.parse: {exc}"]
 
     errors: list[str] = []
-
-    forbidden = set(data.get("global_forbidden") or [])
-    missing = DEFAULT_GLOBAL_FORBIDDEN - forbidden
+    missing = DEFAULT_GLOBAL_FORBIDDEN - set(data.get("global_forbidden") or [])
     if missing:
         errors.append(f"[CRIT] policy.global_forbidden: missing defaults {sorted(missing)}")
 
@@ -237,44 +224,7 @@ def validate_policy(root: Path) -> list[str]:
     else:
         for pattern in patterns:
             errors.extend(validate_policy_pattern(pattern))
-
     return errors
-
-
-def validate_policy_pattern(pattern: Any) -> list[str]:
-    if not isinstance(pattern, str) or not pattern:
-        return [f"[CRIT] policy.critical_change_paths: invalid pattern {pattern!r}"]
-
-    errors: list[str] = []
-    if pattern.startswith("/") or PurePosixPath(pattern).is_absolute():
-        errors.append(f"[CRIT] policy.critical_change_paths: absolute pattern rejected: {pattern}")
-    if "\\" in pattern:
-        errors.append(f"[CRIT] policy.critical_change_paths: backslash pattern rejected: {pattern}")
-    if any(part in {"", ".", ".."} for part in pattern.split("/")):
-        errors.append(
-            f"[CRIT] policy.critical_change_paths: traversal or empty segment rejected: {pattern}"
-        )
-    return errors
-
-
-def validate_profile(root: Path, name: str) -> int:
-    profile_dir = root / "profiles" / name
-    errors: list[str] = []
-
-    if not profile_dir.exists():
-        print(f"[CRIT] profile.exists: missing {profile_dir}")
-        return 2
-
-    errors.extend(validate_required_profile_files(profile_dir))
-    errors.extend(validate_profile_file_safety(root, profile_dir))
-
-    manifest_path = profile_dir / "manifest.yaml"
-    if manifest_path.exists():
-        errors.extend(validate_manifest(root, name, manifest_path))
-
-    for error in errors:
-        print(error)
-    return 2 if errors else 0
 
 
 def validate_required_profile_files(profile_dir: Path) -> list[str]:
@@ -295,8 +245,7 @@ def validate_profile_file_safety(root: Path, profile_dir: Path) -> list[str]:
             continue
         if path.name in FORBIDDEN_FILENAMES:
             errors.append(f"[CRIT] forbidden_file: {path.relative_to(root)}")
-        relative_parts = set(path.relative_to(profile_dir).parts)
-        if relative_parts & RUNTIME_PATH_PARTS:
+        if set(path.relative_to(profile_dir).parts) & RUNTIME_PATH_PARTS:
             errors.append(f"[CRIT] runtime_file: {path.relative_to(root)}")
     return errors
 
@@ -306,39 +255,44 @@ def validate_manifest(root: Path, profile_name: str, manifest_path: Path) -> lis
         manifest = load_yaml(manifest_path)
     except Exception as exc:
         return [f"[CRIT] manifest.parse: {exc}"]
-
     if not isinstance(manifest, dict):
         return ["[CRIT] manifest: must be a mapping"]
 
-    errors = validate_with_schema(
-        manifest,
-        root / "schemas" / "manifest.schema.json",
-        "manifest",
-    )
-
+    errors = validate_with_schema(manifest, root / "schemas" / "manifest.schema.json", "manifest")
     if manifest.get("name") != profile_name:
         errors.append(f"[CRIT] manifest.name: expected {profile_name!r}")
     if manifest.get("type") != "hermes-agent-profile":
         errors.append("[CRIT] manifest.type: must be hermes-agent-profile")
-
-    secrets = manifest.get("secrets") or {}
-    if secrets.get("readable_by_agentops") is not False:
+    if (manifest.get("secrets") or {}).get("readable_by_agentops") is not False:
         errors.append("[CRIT] secrets.readable_by_agentops: must be false")
 
     permissions = manifest.get("permissions") or {}
     allowed = set(permissions.get("allowed") or [])
     approval = set(permissions.get("requires_approval") or [])
     forbidden = set(permissions.get("forbidden") or [])
-
     missing = global_forbidden(root) - forbidden
     if missing:
         errors.append(f"[CRIT] permissions.forbidden: missing global forbidden {sorted(missing)}")
-
     overlap = (allowed | approval) & forbidden
     if overlap:
         errors.append(f"[CRIT] permissions.conflict: allowed/approval overlaps forbidden {sorted(overlap)}")
-
     return errors
+
+
+def validate_profile(root: Path, name: str) -> int:
+    profile_dir = root / "profiles" / name
+    errors: list[str] = []
+    if not profile_dir.exists():
+        print(f"[CRIT] profile.exists: missing {profile_dir}")
+        return 2
+    errors.extend(validate_required_profile_files(profile_dir))
+    errors.extend(validate_profile_file_safety(root, profile_dir))
+    manifest_path = profile_dir / "manifest.yaml"
+    if manifest_path.exists():
+        errors.extend(validate_manifest(root, name, manifest_path))
+    for error in errors:
+        print(error)
+    return 2 if errors else 0
 
 
 def load_inventory(root: Path) -> dict[str, Any]:
@@ -361,29 +315,16 @@ def load_change_proposal(root: Path, change_id: str, errors: list[str]) -> dict[
     if not path.exists():
         errors.append(f"[CRIT] change.proposal: missing {path}")
         return None
-
     try:
         proposal = load_yaml(path)
     except Exception as exc:
         errors.append(f"[CRIT] change.proposal.parse: {exc}")
         return None
-
     if not isinstance(proposal, dict):
         errors.append("[CRIT] change.proposal: must be a mapping")
         return None
-
-    errors.extend(
-        validate_with_schema(
-            proposal,
-            root / "schemas" / "change-proposal.schema.json",
-            "change-proposal",
-        )
-    )
-    validate_required_date_time(
-        proposal.get("created_at"),
-        errors,
-        "change.proposal.created_at",
-    )
+    errors.extend(validate_with_schema(proposal, root / "schemas" / "change-proposal.schema.json", "change-proposal"))
+    validate_required_date_time(proposal.get("created_at"), errors, "change.proposal.created_at")
     return proposal
 
 
@@ -405,7 +346,6 @@ def normalize_repo_path(raw_path: str, errors: list[str], context: str) -> str |
     if any(part in {"", ".", ".."} for part in raw_path.split("/")):
         errors.append(f"[CRIT] diff.path.{context}: traversal or empty segment rejected: {raw_path}")
         return None
-
     normalized = PurePosixPath(raw_path).as_posix()
     if normalized != raw_path:
         errors.append(f"[CRIT] diff.path.{context}: non-normal path rejected: {raw_path}")
@@ -413,12 +353,7 @@ def normalize_repo_path(raw_path: str, errors: list[str], context: str) -> str |
     return normalized
 
 
-def strip_prefixed_path(
-    token: str,
-    expected_prefixes: tuple[str, ...],
-    errors: list[str],
-    context: str,
-) -> str | None:
+def strip_prefixed_path(token: str, expected_prefixes: tuple[str, ...], errors: list[str], context: str) -> str | None:
     if token == "/dev/null":
         return None
     for prefix in expected_prefixes:
@@ -430,7 +365,6 @@ def strip_prefixed_path(
 
 def parse_diff_paths(diff_text: str, errors: list[str]) -> set[str]:
     paths: set[str] = set()
-
     for line_number, line in enumerate(diff_text.splitlines(), start=1):
         if line.startswith("diff --git "):
             collect_diff_git_header_paths(line, line_number, paths, errors)
@@ -438,21 +372,14 @@ def parse_diff_paths(diff_text: str, errors: list[str]) -> set[str]:
             collect_file_header_path(line, line_number, paths, errors)
         elif line.startswith("rename from ") or line.startswith("rename to "):
             collect_rename_path(line, line_number, paths, errors)
-
     return paths
 
 
-def collect_diff_git_header_paths(
-    line: str,
-    line_number: int,
-    paths: set[str],
-    errors: list[str],
-) -> None:
+def collect_diff_git_header_paths(line: str, line_number: int, paths: set[str], errors: list[str]) -> None:
     tokens = line.split()
     if len(tokens) != 4:
         errors.append(f"[CRIT] diff.header.line{line_number}: malformed diff --git header")
         return
-
     for token, prefixes, context in (
         (tokens[2], ("a/",), f"line{line_number}.old"),
         (tokens[3], ("b/",), f"line{line_number}.new"),
@@ -462,18 +389,12 @@ def collect_diff_git_header_paths(
             paths.add(path)
 
 
-def collect_file_header_path(
-    line: str,
-    line_number: int,
-    paths: set[str],
-    errors: list[str],
-) -> None:
+def collect_file_header_path(line: str, line_number: int, paths: set[str], errors: list[str]) -> None:
     tokens = line.split()
     marker = "---" if line.startswith("--- ") else "+++"
     if len(tokens) != 2:
         errors.append(f"[CRIT] diff.header.line{line_number}: malformed {marker} header")
         return
-
     is_old = marker == "---"
     prefixes = ("a/",) if is_old else ("b/",)
     side = "old" if is_old else "new"
@@ -482,19 +403,13 @@ def collect_file_header_path(
         paths.add(path)
 
 
-def collect_rename_path(
-    line: str,
-    line_number: int,
-    paths: set[str],
-    errors: list[str],
-) -> None:
+def collect_rename_path(line: str, line_number: int, paths: set[str], errors: list[str]) -> None:
     if line.startswith("rename from "):
         raw_path = line[len("rename from "):]
         context = f"line{line_number}.rename_from"
     else:
         raw_path = line[len("rename to "):]
         context = f"line{line_number}.rename_to"
-
     path = normalize_repo_path(raw_path, errors, context)
     if path:
         paths.add(path)
@@ -512,15 +427,7 @@ def git_diff(root: Path, agent: str, staged: bool = False) -> str:
     if staged:
         command.append("--staged")
     command.extend(["--", f"profiles/{agent}"])
-
-    process = subprocess.run(
-        command,
-        cwd=root,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    process = subprocess.run(command, cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if process.returncode not in (0, 1):
         raise RuntimeError(process.stderr.strip() or "git diff failed")
     return process.stdout
@@ -568,29 +475,15 @@ def load_approval_record(
     except Exception as exc:
         errors.append(f"[CRIT] approval.{approval_file.name}: {exc}")
         return None
-
     if not isinstance(approval, dict):
         errors.append(f"[CRIT] approval.{approval_file.name}: must be a mapping")
         return None
-
-    errors.extend(
-        validate_with_schema(
-            approval,
-            root / "schemas" / "approval-record.schema.json",
-            f"approval-record.{approval_file.name}",
-        )
-    )
-    validate_required_date_time(
-        approval.get("created_at"),
-        errors,
-        f"approval.{approval_file.name}.created_at",
-    )
-
+    errors.extend(validate_with_schema(approval, root / "schemas" / "approval-record.schema.json", f"approval-record.{approval_file.name}"))
+    validate_required_date_time(approval.get("created_at"), errors, f"approval.{approval_file.name}.created_at")
     if approval.get("change_id") != change_id:
         errors.append(f"[CRIT] approval.{approval_file.name}: change_id mismatch")
     if approval.get("diff_sha256") != expected_hash:
         errors.append(f"[CRIT] approval.{approval_file.name}: diff hash mismatch")
-
     approver = approval.get("approver")
     decision = approval.get("decision")
     if decision == "approve" and approver:
@@ -601,9 +494,20 @@ def load_approval_record(
             )
         else:
             seen_approvers[str(approver)] = approval_file.name
-
     approval["_file"] = approval_file.name
     return approval
+
+
+def collect_approval_records(root: Path, change_id: str, expected_hash: str | None, approvals_dir: Path, errors: list[str]) -> list[dict[str, Any]]:
+    approvals: list[dict[str, Any]] = []
+    seen_approvers: dict[str, str] = {}
+    if not approvals_dir.exists():
+        return approvals
+    for approval_file in sorted(approvals_dir.glob("*.yaml")):
+        approval = load_approval_record(root, change_id, expected_hash, seen_approvers, approval_file, errors)
+        if approval is not None:
+            approvals.append(approval)
+    return approvals
 
 
 def collect_change_validation(
@@ -611,34 +515,29 @@ def collect_change_validation(
     change_id: str,
     *,
     enforce_threshold: bool,
+    reject_is_error: bool,
     require_git_clean: bool = False,
     require_patch_applicable: bool = False,
 ) -> ChangeValidation:
     result = ChangeValidation()
     result.errors.extend(validate_policy(root))
-
     directory = change_dir(root, change_id)
     if not directory.exists():
         result.errors.append(f"[CRIT] change.dir: missing {directory}")
         return result
-
     proposal = load_change_proposal(root, change_id, result.errors)
     result.proposal = proposal
-
     diff_file = directory / "diff.patch"
     if not diff_file.exists():
         result.errors.append(f"[CRIT] change.diff: missing {diff_file}")
         diff_text = ""
     else:
         diff_text = diff_file.read_text(encoding="utf-8")
-
     if proposal is None:
         return result
-
     expected_hash = proposal.get("diff_sha256")
     if expected_hash != sha256_text(diff_text):
         result.errors.append("[CRIT] change.diff_sha256: proposal hash does not match diff.patch")
-
     agent = proposal.get("agent")
     if not isinstance(agent, str) or not agent:
         result.errors.append("[CRIT] change.agent: missing or invalid agent")
@@ -648,68 +547,23 @@ def collect_change_validation(
             check_git_clean(root, agent, result.errors)
         if require_patch_applicable and diff_text:
             check_patch_applicable(root, diff_text, result.errors)
-
-    result.approvals = collect_approval_records(
-        root,
-        change_id,
-        expected_hash,
-        directory / "approvals",
-        result.errors,
-    )
-
-    if any(approval.get("decision") == "reject" for approval in result.approvals):
+    result.approvals = collect_approval_records(root, change_id, expected_hash, directory / "approvals", result.errors)
+    if reject_is_error and any(approval.get("decision") == "reject" for approval in result.approvals):
         result.errors.append("[CRIT] approval.status: at least one rejection is present")
-
     if enforce_threshold:
         validate_approval_threshold(root, proposal, result.approvals, result.errors)
-
     return result
 
 
-def collect_approval_records(
-    root: Path,
-    change_id: str,
-    expected_hash: str | None,
-    approvals_dir: Path,
-    errors: list[str],
-) -> list[dict[str, Any]]:
-    approvals: list[dict[str, Any]] = []
-    seen_approvers: dict[str, str] = {}
-
-    if not approvals_dir.exists():
-        return approvals
-
-    for approval_file in sorted(approvals_dir.glob("*.yaml")):
-        approval = load_approval_record(
-            root,
-            change_id,
-            expected_hash,
-            seen_approvers,
-            approval_file,
-            errors,
-        )
-        if approval is not None:
-            approvals.append(approval)
-
-    return approvals
-
-
-def validate_approval_threshold(
-    root: Path,
-    proposal: dict[str, Any],
-    approvals: list[dict[str, Any]],
-    errors: list[str],
-) -> None:
+def validate_approval_threshold(root: Path, proposal: dict[str, Any], approvals: list[dict[str, Any]], errors: list[str]) -> None:
     risk = str(proposal.get("risk_level", "medium"))
     expected_required = risk_approvals(root).get(risk, 1)
     declared_required = int(proposal.get("required_approvals") or expected_required)
-
     if declared_required != expected_required:
         errors.append(
             f"[CRIT] approval.required_approvals: proposal declares {declared_required}, "
             f"policy requires {expected_required}"
         )
-
     approved_by = {
         approval.get("approver")
         for approval in approvals
@@ -719,24 +573,15 @@ def validate_approval_threshold(
         errors.append(f"[CRIT] approval.threshold: {len(approved_by)} approvals, require {expected_required}")
 
 
-def display_change_status(
-    root: Path,
-    proposal: dict[str, Any],
-    approvals: list[dict[str, Any]],
-) -> str:
+def display_change_status(root: Path, proposal: dict[str, Any], approvals: list[dict[str, Any]]) -> str:
     if any(approval.get("decision") == "reject" for approval in approvals):
         return "rejected"
-
     approved_by = {
         approval.get("approver")
         for approval in approvals
         if approval.get("decision") == "approve" and approval.get("approver")
     }
-    required = int(
-        proposal.get("required_approvals")
-        or risk_approvals(root).get(str(proposal.get("risk_level", "medium")), 1)
-    )
-
+    required = int(proposal.get("required_approvals") or risk_approvals(root).get(str(proposal.get("risk_level", "medium")), 1))
     if len(approved_by) >= required:
         return "approved"
     if approvals:
@@ -745,23 +590,18 @@ def display_change_status(
 
 
 def trusted_status(root: Path, change_id: str) -> tuple[str, ChangeValidation]:
-    validation = collect_change_validation(root, change_id, enforce_threshold=False)
+    validation = collect_change_validation(root, change_id, enforce_threshold=False, reject_is_error=False)
     if validation.errors or validation.proposal is None:
         return "invalid", validation
     return display_change_status(root, validation.proposal, validation.approvals), validation
 
 
-def validate_change(
-    root: Path,
-    change_id: str,
-    *,
-    require_git_clean: bool = False,
-    require_patch_applicable: bool = False,
-) -> int:
+def validate_change(root: Path, change_id: str, *, require_git_clean: bool = False, require_patch_applicable: bool = False) -> int:
     validation = collect_change_validation(
         root,
         change_id,
         enforce_threshold=True,
+        reject_is_error=True,
         require_git_clean=require_git_clean,
         require_patch_applicable=require_patch_applicable,
     )
@@ -786,24 +626,13 @@ def build_change_proposal(args, root: Path, diff_text: str, digest: str, change_
         "status": "proposed",
         "rollback": {"strategy": "git_first", "note": args.rollback_note},
         "validation": {
-            "required_before_apply": [
-                "changes verify",
-                "profile validate",
-                "git status clean",
-                "rollback point",
-            ],
+            "required_before_apply": ["changes verify", "profile validate", "git status clean", "rollback point"],
             "note": args.validation_note,
         },
     }
 
 
-def build_approval_record(
-    change_id: str,
-    decision: str,
-    approver: str,
-    comment: str,
-    diff_sha256: str | None,
-) -> dict[str, Any]:
+def build_approval_record(change_id: str, decision: str, approver: str, comment: str, diff_sha256: str | None) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "change_id": change_id,
@@ -822,11 +651,7 @@ def build_approval_record(
 
 
 def validate_generated_approval(root: Path, record: dict[str, Any]) -> list[str]:
-    errors = validate_with_schema(
-        record,
-        root / "schemas" / "approval-record.schema.json",
-        "approval-record.generated",
-    )
+    errors = validate_with_schema(record, root / "schemas" / "approval-record.schema.json", "approval-record.generated")
     validate_required_date_time(record.get("created_at"), errors, "approval.generated.created_at")
     return errors
 
@@ -835,7 +660,6 @@ def cmd_validate(args) -> int:
     root = Path(args.root).resolve()
     if args.agent:
         return validate_profile(root, args.agent)
-
     code = 0
     for item in load_inventory(root).get("agents", []):
         if not isinstance(item, dict) or not item.get("name"):
@@ -857,14 +681,12 @@ def cmd_inventory_list(args) -> int:
 def cmd_validate_schemas(args) -> int:
     root = Path(args.root).resolve()
     errors: list[str] = []
-
     for path in sorted((root / "schemas").glob("*.schema.json")):
         try:
             if jsonschema is not None:
                 jsonschema.Draft202012Validator.check_schema(load_json(path))
         except Exception as exc:
             errors.append(f"[CRIT] schema.{path.name}: {exc}")
-
     for error in errors:
         print(error)
     return 2 if errors else 0
@@ -875,7 +697,6 @@ def cmd_policy_effective(args) -> int:
     if args.json:
         print(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
-
     print(f"policy_file: {data['policy_file']}")
     print(f"apply_enabled: {str(data['apply_enabled']).lower()}")
     print(f"global_forbidden: {data['global_forbidden']}")
@@ -888,22 +709,20 @@ def cmd_policy_explain(args) -> int:
     root = Path(args.root).resolve()
     target = args.target
     thresholds = risk_approvals(root)
-
     if target in thresholds:
         print(f"risk: {target}")
         print(f"required_approvals: {thresholds[target]}")
         print("source: policies/global-permissions.yaml risk_defaults")
         return 0
-
     matches = [pattern for pattern in critical_paths(root) if fnmatch.fnmatchcase(target, pattern)]
     print(f"path: {target}")
     print(f"critical: {str(bool(matches)).lower()}")
-    if not matches:
-        print("matched_patterns: []")
-    else:
+    if matches:
         print("matched_patterns:")
         for pattern in matches:
             print(f"  - {pattern}")
+    else:
+        print("matched_patterns: []")
     return 0
 
 
@@ -921,23 +740,19 @@ def cmd_changes_propose(args) -> int:
         for error in policy_errors:
             print(error)
         return 2
-
     if not NAME_RE.match(args.agent):
         print(f"[CRIT] change.agent: invalid agent name {args.agent!r}")
         return 2
-
     diff_text = git_diff(root, args.agent, staged=args.staged)
     if not diff_text.strip() and not args.allow_empty:
         print("[CRIT] change.diff: no Git diff found for profile")
         return 2
-
     digest = sha256_text(diff_text)
     change_id = f"{utc_now_compact()}_{args.agent}_{digest[:10]}"
     directory = change_dir(root, change_id)
     if directory.exists():
         print(f"[CRIT] change.dir: already exists {directory}")
         return 2
-
     proposal = build_change_proposal(args, root, diff_text, digest, change_id)
     write_yaml(directory / "proposal.yaml", proposal)
     (directory / "diff.patch").write_text(diff_text, encoding="utf-8")
@@ -955,23 +770,16 @@ def cmd_changes_list(args) -> int:
     changes_root = root / "changes"
     if not changes_root.exists():
         return 0
-
     for directory in sorted(changes_root.iterdir()):
         if not directory.is_dir() or not (directory / "proposal.yaml").exists():
             continue
-
         status, validation = trusted_status(root, directory.name)
         proposal = validation.proposal
         if proposal is None:
             continue
         if args.agent and proposal.get("agent") != args.agent:
             continue
-
-        print(
-            f"{directory.name}\t{proposal.get('agent')}\t{proposal.get('risk_level')}"
-            f"\t{status}\t{proposal.get('title')}"
-        )
-
+        print(f"{directory.name}\t{proposal.get('agent')}\t{proposal.get('risk_level')}\t{status}\t{proposal.get('title')}")
     return 0
 
 
@@ -979,30 +787,14 @@ def cmd_changes_show(args) -> int:
     root = Path(args.root).resolve()
     status, validation = trusted_status(root, args.change_id)
     proposal = validation.proposal
-
     if proposal is None:
         for error in validation.errors:
             print(error)
         return 2
-
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "proposal": proposal,
-                    "status": status,
-                    "approvals": validation.approvals,
-                    "errors": validation.errors,
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
+        print(json.dumps({"proposal": proposal, "status": status, "approvals": validation.approvals, "errors": validation.errors}, ensure_ascii=False, indent=2))
         return 0
-
-    approval_count = len(
-        [approval for approval in validation.approvals if approval.get("decision") == "approve"]
-    )
+    approval_count = len([approval for approval in validation.approvals if approval.get("decision") == "approve"])
     print(f"# {args.change_id}")
     print(f"agent: {proposal.get('agent')}")
     print(f"title: {proposal.get('title')}")
@@ -1010,12 +802,10 @@ def cmd_changes_show(args) -> int:
     print(f"status: {status}")
     print(f"diff_sha256: {proposal.get('diff_sha256')}")
     print(f"approvals: {approval_count}/{proposal.get('required_approvals')}")
-
     if validation.errors:
         print("errors:")
         for error in validation.errors:
             print(f"  - {error}")
-
     return 0
 
 
@@ -1024,42 +814,27 @@ def cmd_changes_diff(args) -> int:
     if not diff_file.exists():
         print(f"[CRIT] change.diff: missing {diff_file}")
         return 2
-
     print(diff_file.read_text(encoding="utf-8"), end="")
     return 0
 
 
 def cmd_changes_approve(args) -> int:
     root = Path(args.root).resolve()
-    validation = collect_change_validation(root, args.change_id, enforce_threshold=False)
+    validation = collect_change_validation(root, args.change_id, enforce_threshold=False, reject_is_error=True)
     if validation.errors or validation.proposal is None:
         for error in validation.errors:
             print(error)
         return 2
-
     if not NAME_RE.match(args.approver):
         print(f"[CRIT] approval.approver: invalid approver {args.approver!r}")
         return 2
-
-    record = build_approval_record(
-        args.change_id,
-        args.decision,
-        args.approver,
-        args.comment,
-        validation.proposal.get("diff_sha256"),
-    )
-
+    record = build_approval_record(args.change_id, args.decision, args.approver, args.comment, validation.proposal.get("diff_sha256"))
     record_errors = validate_generated_approval(root, record)
     if record_errors:
         for error in record_errors:
             print(error)
         return 2
-
-    output_path = (
-        change_dir(root, args.change_id)
-        / "approvals"
-        / f"{utc_now_compact()}_{slug(args.approver)}_{args.decision}.yaml"
-    )
+    output_path = change_dir(root, args.change_id) / "approvals" / f"{utc_now_compact()}_{slug(args.approver)}_{args.decision}.yaml"
     write_yaml(output_path, record)
     print(output_path.relative_to(root))
     return 0
@@ -1074,11 +849,22 @@ def cmd_changes_verify(args) -> int:
     )
 
 
-def cmd_apply(args) -> int:
-    print(
-        "apply is intentionally not implemented. This command is reserved until "
-        "preflight, locking, rollback, and post-apply validation are complete."
+def validate_change(root: Path, change_id: str, *, require_git_clean: bool = False, require_patch_applicable: bool = False) -> int:
+    validation = collect_change_validation(
+        root,
+        change_id,
+        enforce_threshold=True,
+        reject_is_error=True,
+        require_git_clean=require_git_clean,
+        require_patch_applicable=require_patch_applicable,
     )
+    for error in validation.errors:
+        print(error)
+    return 2 if validation.errors else 0
+
+
+def cmd_apply(args) -> int:
+    print("apply is intentionally not implemented. This command is reserved until preflight, locking, rollback, and post-apply validation are complete.")
     return 1
 
 
@@ -1097,15 +883,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     policy = subcommands.add_parser("policy")
     policy_subcommands = policy.add_subparsers(dest="policy_cmd", required=True)
-
     policy_effective = policy_subcommands.add_parser("effective")
     policy_effective.add_argument("--json", action="store_true")
     policy_effective.set_defaults(func=cmd_policy_effective)
-
     policy_explain = policy_subcommands.add_parser("explain")
     policy_explain.add_argument("target")
     policy_explain.set_defaults(func=cmd_policy_explain)
-
     policy_check = policy_subcommands.add_parser("check")
     policy_check.set_defaults(func=cmd_policy_check)
 
@@ -1116,7 +899,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     changes = subcommands.add_parser("changes")
     change_subcommands = changes.add_subparsers(dest="changes_cmd", required=True)
-
     propose = change_subcommands.add_parser("propose")
     propose.add_argument("agent")
     propose.add_argument("--title", required=True)
@@ -1125,10 +907,7 @@ def build_parser() -> argparse.ArgumentParser:
     propose.add_argument("--risk-level", choices=sorted(DEFAULT_RISK_APPROVALS), default="medium")
     propose.add_argument("--created-by", default="user")
     propose.add_argument("--rollback-note", default="Rollback with Git-first strategy, then validate.")
-    propose.add_argument(
-        "--validation-note",
-        default="Run changes verify and profile validation before any future apply.",
-    )
+    propose.add_argument("--validation-note", default="Run changes verify and profile validation before any future apply.")
     propose.add_argument("--staged", action="store_true")
     propose.add_argument("--allow-empty", action="store_true")
     propose.set_defaults(func=cmd_changes_propose)
@@ -1136,23 +915,19 @@ def build_parser() -> argparse.ArgumentParser:
     list_changes = change_subcommands.add_parser("list")
     list_changes.add_argument("agent", nargs="?")
     list_changes.set_defaults(func=cmd_changes_list)
-
     show = change_subcommands.add_parser("show")
     show.add_argument("change_id")
     show.add_argument("--json", action="store_true")
     show.set_defaults(func=cmd_changes_show)
-
     diff = change_subcommands.add_parser("diff")
     diff.add_argument("change_id")
     diff.set_defaults(func=cmd_changes_diff)
-
     approve = change_subcommands.add_parser("approve")
     approve.add_argument("change_id")
     approve.add_argument("--approver", required=True)
     approve.add_argument("--decision", choices=["approve", "reject"], default="approve")
     approve.add_argument("--comment", default="")
     approve.set_defaults(func=cmd_changes_approve)
-
     verify = change_subcommands.add_parser("verify")
     verify.add_argument("change_id")
     verify.add_argument("--check-git-clean", action="store_true")
@@ -1162,14 +937,12 @@ def build_parser() -> argparse.ArgumentParser:
     apply_parser = subcommands.add_parser("apply")
     apply_parser.add_argument("change_id", nargs="?")
     apply_parser.set_defaults(func=cmd_apply)
-
     return parser
 
 
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-
     try:
         return int(args.func(args))
     except Exception as exc:
