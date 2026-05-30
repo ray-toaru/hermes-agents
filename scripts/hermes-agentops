@@ -1,397 +1,954 @@
 #!/usr/bin/env python3
-"""Hermes AgentOps CLI: governance validation only; no secret reads or runtime mutation."""
+"""Hermes AgentOps CLI.
+
+This CLI manages repository governance records only. It validates policy,
+profile metadata, schemas, and change records. It deliberately does not apply
+changes, read secret values, mutate runtime state, or orchestrate business work.
+"""
+
 from __future__ import annotations
 
-import argparse, fnmatch, hashlib, json, re, subprocess, sys
+import argparse
+import fnmatch
+import hashlib
+import json
+import re
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
+
 try:
     import yaml
-except Exception:
+except Exception:  # pragma: no cover
     yaml = None
+
 try:
     import jsonschema
-except Exception:
+except Exception:  # pragma: no cover
     jsonschema = None
 
-REQ_PROFILE = ["SOUL.md", "config.yaml", "manifest.yaml"]
-FORBIDDEN_NAMES = {".env", "state.db", "secrets.json"}
-DEFAULT_FORBIDDEN = {"read_secret_values", "execute_business_actions", "bypass_approval", "delete_runtime_state", "bypass_hermes_runtime_provider", "bypass_hermes_tool_registry"}
-DEFAULT_RISK = {"low": 1, "medium": 1, "high": 2, "critical": 2}
+REQUIRED_PROFILE_FILES = ["SOUL.md", "config.yaml", "manifest.yaml"]
+FORBIDDEN_FILENAMES = {".env", "state.db", "secrets.json"}
+RUNTIME_PATH_PARTS = {"logs", "sessions", "workspace", "workspaces"}
+DEFAULT_GLOBAL_FORBIDDEN = {
+    "read_secret_values",
+    "execute_business_actions",
+    "bypass_approval",
+    "delete_runtime_state",
+    "bypass_hermes_runtime_provider",
+    "bypass_hermes_tool_registry",
+}
+DEFAULT_RISK_APPROVALS = {"low": 1, "medium": 1, "high": 2, "critical": 2}
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
-DT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$")
+RFC3339_DATE_TIME_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
 
-def yload(p: Path):
-    if yaml is None: raise RuntimeError("PyYAML is required: python -m pip install pyyaml")
-    with p.open("r", encoding="utf-8") as f: return yaml.safe_load(f)
 
-def ywrite(p: Path, data) -> None:
-    if yaml is None: raise RuntimeError("PyYAML is required: python -m pip install pyyaml")
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("w", encoding="utf-8") as f: yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+class ChangeValidation:
+    def __init__(self) -> None:
+        self.errors: list[str] = []
+        self.proposal: dict[str, Any] | None = None
+        self.approvals: list[dict[str, Any]] = []
 
-def jload(p: Path):
-    with p.open("r", encoding="utf-8") as f: return json.load(f)
 
-def is_dt(v: Any) -> bool:
-    if not isinstance(v, str) or not DT_RE.match(v): return False
-    try: return datetime.fromisoformat(v.replace("Z", "+00:00")).tzinfo is not None
-    except ValueError: return False
+def load_yaml(path: Path) -> Any:
+    if yaml is None:
+        raise RuntimeError("PyYAML is required: python -m pip install pyyaml")
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
 
-def schema_errors(instance, schema_path: Path, label: str) -> list[str]:
-    if not schema_path.exists(): return [f"[CRIT] schema.{label}: missing {schema_path}"]
-    if jsonschema is None: return []
+
+def write_yaml(path: Path, data: Any) -> None:
+    if yaml is None:
+        raise RuntimeError("PyYAML is required: python -m pip install pyyaml")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(data, handle, allow_unicode=True, sort_keys=False)
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def utc_now_compact() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def slug(value: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_.-]+", "-", value.strip().lower()).strip("-") or "record"
+
+
+def is_rfc3339_date_time(value: Any) -> bool:
+    if not isinstance(value, str) or not RFC3339_DATE_TIME_RE.match(value):
+        return False
     try:
-        schema = jload(schema_path); jsonschema.Draft202012Validator.check_schema(schema)
-        checker = jsonschema.FormatChecker()
-        @checker.checks("date-time")
-        def check_dt(v): return True if not isinstance(v, str) else is_dt(v)
-        validator = jsonschema.Draft202012Validator(schema, format_checker=checker)
-        out=[]
-        for e in sorted(validator.iter_errors(instance), key=lambda x: list(x.path)):
-            path = ".".join(str(x) for x in e.path) or "<root>"
-            out.append(f"[CRIT] schema.{label}.{path}: {e.message}")
-        return out
-    except Exception as e: return [f"[CRIT] schema.{label}: {e}"]
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
 
-def ppath(root: Path) -> Path: return root / "policies" / "global-permissions.yaml"
-def policy(root: Path) -> dict[str, Any]:
-    p = ppath(root)
-    if not p.exists(): return {}
-    data = yload(p) or {}
-    if not isinstance(data, dict): raise RuntimeError("policies/global-permissions.yaml must be a mapping")
+
+def validate_required_date_time(value: Any, errors: list[str], label: str) -> None:
+    if not is_rfc3339_date_time(value):
+        errors.append(f"[CRIT] {label}: must be RFC3339 date-time, got {value!r}")
+
+
+def build_format_checker():
+    if jsonschema is None:
+        return None
+    checker = jsonschema.FormatChecker()
+
+    @checker.checks("date-time")
+    def check_date_time(value: Any) -> bool:
+        return True if not isinstance(value, str) else is_rfc3339_date_time(value)
+
+    return checker
+
+
+def validate_with_schema(instance: Any, schema_path: Path, label: str) -> list[str]:
+    if not schema_path.exists():
+        return [f"[CRIT] schema.{label}: missing {schema_path}"]
+    if jsonschema is None:
+        return []
+    try:
+        schema = load_json(schema_path)
+        jsonschema.Draft202012Validator.check_schema(schema)
+        validator = jsonschema.Draft202012Validator(schema, format_checker=build_format_checker())
+        errors: list[str] = []
+        for error in sorted(validator.iter_errors(instance), key=lambda item: list(item.path)):
+            path = ".".join(str(part) for part in error.path) or "<root>"
+            errors.append(f"[CRIT] schema.{label}.{path}: {error.message}")
+        return errors
+    except Exception as exc:
+        return [f"[CRIT] schema.{label}: {exc}"]
+
+
+def policy_path(root: Path) -> Path:
+    return root / "policies" / "global-permissions.yaml"
+
+
+def load_policy(root: Path) -> dict[str, Any]:
+    path = policy_path(root)
+    if not path.exists():
+        return {}
+    data = load_yaml(path) or {}
+    if not isinstance(data, dict):
+        raise RuntimeError("policies/global-permissions.yaml must be a mapping")
     return data
 
-def global_forbidden(root: Path) -> set[str]: return set(policy(root).get("global_forbidden") or []) | DEFAULT_FORBIDDEN
+
+def global_forbidden(root: Path) -> set[str]:
+    return set(load_policy(root).get("global_forbidden") or []) | DEFAULT_GLOBAL_FORBIDDEN
+
 
 def risk_approvals(root: Path) -> dict[str, int]:
-    if not ppath(root).exists(): return dict(DEFAULT_RISK)
-    defaults = policy(root).get("risk_defaults") or {}; out={}
-    for risk, fallback in DEFAULT_RISK.items():
-        try: out[risk] = max(1, int(defaults.get(f"{risk}_required_approvals", fallback)))
-        except Exception: out[risk] = fallback
-    return out
+    if not policy_path(root).exists():
+        return dict(DEFAULT_RISK_APPROVALS)
+    defaults = load_policy(root).get("risk_defaults") or {}
+    thresholds: dict[str, int] = {}
+    for risk, fallback in DEFAULT_RISK_APPROVALS.items():
+        try:
+            thresholds[risk] = max(1, int(defaults.get(f"{risk}_required_approvals", fallback)))
+        except Exception:
+            thresholds[risk] = fallback
+    return thresholds
 
-def critical_paths(root: Path) -> list[str]: return [str(x) for x in (policy(root).get("critical_change_paths") or [])]
+
+def critical_paths(root: Path) -> list[str]:
+    return [str(value) for value in (load_policy(root).get("critical_change_paths") or [])]
+
 
 def effective_policy(root: Path) -> dict[str, Any]:
-    return {"policy_file": str(ppath(root)), "apply_enabled": False, "global_forbidden": sorted(global_forbidden(root)), "risk_approvals": risk_approvals(root), "critical_change_paths": critical_paths(root)}
+    return {
+        "policy_file": str(policy_path(root)),
+        "apply_enabled": False,
+        "global_forbidden": sorted(global_forbidden(root)),
+        "risk_approvals": risk_approvals(root),
+        "critical_change_paths": critical_paths(root),
+    }
+
+
+def validate_policy_pattern(pattern: Any) -> list[str]:
+    if not isinstance(pattern, str) or not pattern:
+        return [f"[CRIT] policy.critical_change_paths: invalid pattern {pattern!r}"]
+    errors: list[str] = []
+    if pattern.startswith("/") or PurePosixPath(pattern).is_absolute():
+        errors.append(f"[CRIT] policy.critical_change_paths: absolute pattern rejected: {pattern}")
+    if "\\" in pattern:
+        errors.append(f"[CRIT] policy.critical_change_paths: backslash pattern rejected: {pattern}")
+    if any(part in {"", ".", ".."} for part in pattern.split("/")):
+        errors.append(f"[CRIT] policy.critical_change_paths: traversal or empty segment rejected: {pattern}")
+    return errors
+
 
 def validate_policy(root: Path) -> list[str]:
-    if not ppath(root).exists(): return [f"[CRIT] policy.exists: missing {ppath(root)}"]
-    try: data = policy(root)
-    except Exception as e: return [f"[CRIT] policy.parse: {e}"]
-    err=[]; missing = DEFAULT_FORBIDDEN - set(data.get("global_forbidden") or [])
-    if missing: err.append(f"[CRIT] policy.global_forbidden: missing defaults {sorted(missing)}")
-    rd = data.get("risk_defaults") or {}
-    for r in DEFAULT_RISK:
-        k=f"{r}_required_approvals"
+    path = policy_path(root)
+    if not path.exists():
+        return [f"[CRIT] policy.exists: missing {path}"]
+    try:
+        data = load_policy(root)
+    except Exception as exc:
+        return [f"[CRIT] policy.parse: {exc}"]
+
+    errors: list[str] = []
+    missing = DEFAULT_GLOBAL_FORBIDDEN - set(data.get("global_forbidden") or [])
+    if missing:
+        errors.append(f"[CRIT] policy.global_forbidden: missing defaults {sorted(missing)}")
+
+    risk_defaults = data.get("risk_defaults") or {}
+    for risk in DEFAULT_RISK_APPROVALS:
+        key = f"{risk}_required_approvals"
         try:
-            if int(rd[k]) < 1: err.append(f"[CRIT] policy.risk_defaults.{k}: must be >= 1")
-        except KeyError: err.append(f"[CRIT] policy.risk_defaults.{k}: missing")
-        except Exception: err.append(f"[CRIT] policy.risk_defaults.{k}: must be an integer")
-    pats = data.get("critical_change_paths") or []
-    if not isinstance(pats, list) or not pats: err.append("[CRIT] policy.critical_change_paths: must be a non-empty list")
+            if int(risk_defaults[key]) < 1:
+                errors.append(f"[CRIT] policy.risk_defaults.{key}: must be >= 1")
+        except KeyError:
+            errors.append(f"[CRIT] policy.risk_defaults.{key}: missing")
+        except Exception:
+            errors.append(f"[CRIT] policy.risk_defaults.{key}: must be an integer")
+
+    patterns = data.get("critical_change_paths") or []
+    if not isinstance(patterns, list) or not patterns:
+        errors.append("[CRIT] policy.critical_change_paths: must be a non-empty list")
     else:
-        for pat in pats:
-            if not isinstance(pat, str) or not pat: err.append(f"[CRIT] policy.critical_change_paths: invalid pattern {pat!r}"); continue
-            if pat.startswith("/") or PurePosixPath(pat).is_absolute(): err.append(f"[CRIT] policy.critical_change_paths: absolute pattern rejected: {pat}")
-            if "\\" in pat: err.append(f"[CRIT] policy.critical_change_paths: backslash pattern rejected: {pat}")
-            if any(x in {"", ".", ".."} for x in pat.split("/")): err.append(f"[CRIT] policy.critical_change_paths: traversal or empty segment rejected: {pat}")
-    return err
+        for pattern in patterns:
+            errors.extend(validate_policy_pattern(pattern))
+    return errors
+
+
+def validate_required_profile_files(profile_dir: Path) -> list[str]:
+    errors: list[str] = []
+    for relative_path in REQUIRED_PROFILE_FILES:
+        path = profile_dir / relative_path
+        if not path.exists():
+            errors.append(f"[CRIT] file.{relative_path}: missing")
+        elif path.stat().st_size == 0:
+            errors.append(f"[CRIT] file.{relative_path}: empty")
+    return errors
+
+
+def validate_profile_file_safety(root: Path, profile_dir: Path) -> list[str]:
+    errors: list[str] = []
+    for path in profile_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.name in FORBIDDEN_FILENAMES:
+            errors.append(f"[CRIT] forbidden_file: {path.relative_to(root)}")
+        if set(path.relative_to(profile_dir).parts) & RUNTIME_PATH_PARTS:
+            errors.append(f"[CRIT] runtime_file: {path.relative_to(root)}")
+    return errors
+
+
+def validate_manifest(root: Path, profile_name: str, manifest_path: Path) -> list[str]:
+    try:
+        manifest = load_yaml(manifest_path)
+    except Exception as exc:
+        return [f"[CRIT] manifest.parse: {exc}"]
+    if not isinstance(manifest, dict):
+        return ["[CRIT] manifest: must be a mapping"]
+
+    errors = validate_with_schema(manifest, root / "schemas" / "manifest.schema.json", "manifest")
+    if manifest.get("name") != profile_name:
+        errors.append(f"[CRIT] manifest.name: expected {profile_name!r}")
+    if manifest.get("type") != "hermes-agent-profile":
+        errors.append("[CRIT] manifest.type: must be hermes-agent-profile")
+    if (manifest.get("secrets") or {}).get("readable_by_agentops") is not False:
+        errors.append("[CRIT] secrets.readable_by_agentops: must be false")
+
+    permissions = manifest.get("permissions") or {}
+    allowed = set(permissions.get("allowed") or [])
+    approval = set(permissions.get("requires_approval") or [])
+    forbidden = set(permissions.get("forbidden") or [])
+    missing = global_forbidden(root) - forbidden
+    if missing:
+        errors.append(f"[CRIT] permissions.forbidden: missing global forbidden {sorted(missing)}")
+    overlap = (allowed | approval) & forbidden
+    if overlap:
+        errors.append(f"[CRIT] permissions.conflict: allowed/approval overlaps forbidden {sorted(overlap)}")
+    return errors
+
 
 def validate_profile(root: Path, name: str) -> int:
-    d = root / "profiles" / name; err=[]
-    if not d.exists(): print(f"[CRIT] profile.exists: missing {d}"); return 2
-    for rel in REQ_PROFILE:
-        p=d/rel
-        if not p.exists(): err.append(f"[CRIT] file.{rel}: missing")
-        elif p.stat().st_size == 0: err.append(f"[CRIT] file.{rel}: empty")
-    for p in d.rglob("*"):
-        if p.is_file():
-            if p.name in FORBIDDEN_NAMES: err.append(f"[CRIT] forbidden_file: {p.relative_to(root)}")
-            if set(p.relative_to(d).parts) & {"logs", "sessions", "workspace", "workspaces"}: err.append(f"[CRIT] runtime_file: {p.relative_to(root)}")
-    mp = d / "manifest.yaml"
-    if mp.exists():
-        try:
-            m = yload(mp)
-            if not isinstance(m, dict): err.append("[CRIT] manifest: must be a mapping")
-            else:
-                err += schema_errors(m, root/"schemas"/"manifest.schema.json", "manifest")
-                if m.get("name") != name: err.append(f"[CRIT] manifest.name: expected {name!r}")
-                if m.get("type") != "hermes-agent-profile": err.append("[CRIT] manifest.type: must be hermes-agent-profile")
-                if (m.get("secrets") or {}).get("readable_by_agentops") is not False: err.append("[CRIT] secrets.readable_by_agentops: must be false")
-                perms = m.get("permissions") or {}; allowed=set(perms.get("allowed") or []); appr=set(perms.get("requires_approval") or []); forb=set(perms.get("forbidden") or [])
-                miss = global_forbidden(root) - forb
-                if miss: err.append(f"[CRIT] permissions.forbidden: missing global forbidden {sorted(miss)}")
-                overlap = (allowed | appr) & forb
-                if overlap: err.append(f"[CRIT] permissions.conflict: allowed/approval overlaps forbidden {sorted(overlap)}")
-        except Exception as e: err.append(f"[CRIT] manifest.parse: {e}")
-    for e in err: print(e)
-    return 2 if err else 0
+    profile_dir = root / "profiles" / name
+    errors: list[str] = []
+    if not profile_dir.exists():
+        print(f"[CRIT] profile.exists: missing {profile_dir}")
+        return 2
+    errors.extend(validate_required_profile_files(profile_dir))
+    errors.extend(validate_profile_file_safety(root, profile_dir))
+    manifest_path = profile_dir / "manifest.yaml"
+    if manifest_path.exists():
+        errors.extend(validate_manifest(root, name, manifest_path))
+    for error in errors:
+        print(error)
+    return 2 if errors else 0
 
-def load_inventory(root: Path):
-    p=root/"inventory"/"agents.yaml"
-    if not p.exists(): return {"agents": []}
-    data=yload(p)
-    if not isinstance(data, dict): raise RuntimeError("inventory/agents.yaml must be a mapping")
-    data.setdefault("agents", []); return data
 
-def cmd_validate(a) -> int:
-    root=Path(a.root).resolve()
-    if a.agent: return validate_profile(root, a.agent)
-    code=0
-    for item in load_inventory(root).get("agents", []):
-        if not isinstance(item, dict) or not item.get("name"): print("[CRIT] inventory: invalid agent entry"); code=2; continue
-        code=max(code, validate_profile(root, item["name"]))
-    return code
+def load_inventory(root: Path) -> dict[str, Any]:
+    path = root / "inventory" / "agents.yaml"
+    if not path.exists():
+        return {"agents": []}
+    data = load_yaml(path)
+    if not isinstance(data, dict):
+        raise RuntimeError("inventory/agents.yaml must be a mapping")
+    data.setdefault("agents", [])
+    return data
 
-def cmd_inventory_list(a) -> int:
-    for item in load_inventory(Path(a.root).resolve()).get("agents", []):
-        if isinstance(item, dict): print(f"{item.get('name')}\t{item.get('status')}\t{item.get('profile_dir')}")
-    return 0
 
-def cmd_validate_schemas(a) -> int:
-    root=Path(a.root).resolve(); err=[]
-    for p in sorted((root/"schemas").glob("*.schema.json")):
-        try:
-            if jsonschema is not None: jsonschema.Draft202012Validator.check_schema(jload(p))
-        except Exception as e: err.append(f"[CRIT] schema.{p.name}: {e}")
-    for e in err: print(e)
-    return 2 if err else 0
+def change_dir(root: Path, change_id: str) -> Path:
+    return root / "changes" / change_id
 
-def cmd_policy_effective(a) -> int:
-    data=effective_policy(Path(a.root).resolve())
-    if a.json: print(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)); return 0
-    print(f"policy_file: {data['policy_file']}\napply_enabled: {str(data['apply_enabled']).lower()}")
-    for k in ("global_forbidden", "risk_approvals", "critical_change_paths"): print(f"{k}: {data[k]}")
-    return 0
 
-def cmd_policy_explain(a) -> int:
-    root=Path(a.root).resolve(); t=a.target; thresholds=risk_approvals(root)
-    if t in thresholds: print(f"risk: {t}\nrequired_approvals: {thresholds[t]}\nsource: policies/global-permissions.yaml risk_defaults"); return 0
-    matches=[p for p in critical_paths(root) if fnmatch.fnmatchcase(t, p)]
-    print(f"path: {t}\ncritical: {str(bool(matches)).lower()}")
-    print("matched_patterns:" if matches else "matched_patterns: []")
-    for p in matches: print(f"  - {p}")
-    return 0
-
-def cmd_policy_check(a) -> int:
-    err=validate_policy(Path(a.root).resolve())
-    for e in err: print(e)
-    return 2 if err else 0
-
-def sha256_text(t: str) -> str: return hashlib.sha256(t.encode("utf-8")).hexdigest()
-def utc_now_compact() -> str: return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-def utc_now_iso() -> str: return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-def slug(v: str) -> str: return re.sub(r"[^a-zA-Z0-9_.-]+", "-", v.strip().lower()).strip("-") or "record"
-def change_dir(root: Path, cid: str) -> Path: return root/"changes"/cid
-
-def load_change(root: Path, cid: str, err: list[str]):
-    p=change_dir(root,cid)/"proposal.yaml"
-    if not p.exists(): err.append(f"[CRIT] change.proposal: missing {p}"); return None
+def load_change_proposal(root: Path, change_id: str, errors: list[str]) -> dict[str, Any] | None:
+    path = change_dir(root, change_id) / "proposal.yaml"
+    if not path.exists():
+        errors.append(f"[CRIT] change.proposal: missing {path}")
+        return None
     try:
-        data=yload(p)
-        if not isinstance(data, dict): err.append("[CRIT] change.proposal: must be a mapping"); return None
-        err += schema_errors(data, root/"schemas"/"change-proposal.schema.json", "change-proposal")
-        if not is_dt(data.get("created_at")): err.append(f"[CRIT] change.proposal.created_at: must be RFC3339 date-time, got {data.get('created_at')!r}")
-        return data
-    except Exception as e: err.append(f"[CRIT] change.proposal.parse: {e}"); return None
+        proposal = load_yaml(path)
+    except Exception as exc:
+        errors.append(f"[CRIT] change.proposal.parse: {exc}")
+        return None
+    if not isinstance(proposal, dict):
+        errors.append("[CRIT] change.proposal: must be a mapping")
+        return None
+    errors.extend(validate_with_schema(proposal, root / "schemas" / "change-proposal.schema.json", "change-proposal"))
+    validate_required_date_time(proposal.get("created_at"), errors, "change.proposal.created_at")
+    return proposal
 
-def norm_path(raw: str, err: list[str], ctx: str) -> str|None:
-    if raw == "/dev/null": return None
-    if not raw or raw in {".", "./"}: err.append(f"[CRIT] diff.path.{ctx}: empty path"); return None
-    if raw.startswith("/") or PurePosixPath(raw).is_absolute(): err.append(f"[CRIT] diff.path.{ctx}: absolute path rejected: {raw}"); return None
-    if "\\" in raw: err.append(f"[CRIT] diff.path.{ctx}: backslash path rejected: {raw}"); return None
-    if raw.startswith('"') or raw.endswith('"') or any(c.isspace() for c in raw): err.append(f"[CRIT] diff.path.{ctx}: ambiguous or quoted path rejected: {raw}"); return None
-    if any(x in {"", ".", ".."} for x in raw.split("/")): err.append(f"[CRIT] diff.path.{ctx}: traversal or empty segment rejected: {raw}"); return None
-    n=PurePosixPath(raw).as_posix()
-    if n != raw: err.append(f"[CRIT] diff.path.{ctx}: non-normal path rejected: {raw}"); return None
-    return n
 
-def strip_path(tok: str, prefixes: tuple[str,...], err: list[str], ctx: str) -> str|None:
-    if tok == "/dev/null": return None
-    for pref in prefixes:
-        if tok.startswith(pref): return norm_path(tok[len(pref):], err, ctx)
-    err.append(f"[CRIT] diff.header.{ctx}: expected prefix {prefixes}, got {tok}"); return None
+def normalize_repo_path(raw_path: str, errors: list[str], context: str) -> str | None:
+    if raw_path == "/dev/null":
+        return None
+    if not raw_path or raw_path in {".", "./"}:
+        errors.append(f"[CRIT] diff.path.{context}: empty path")
+        return None
+    if raw_path.startswith("/") or PurePosixPath(raw_path).is_absolute():
+        errors.append(f"[CRIT] diff.path.{context}: absolute path rejected: {raw_path}")
+        return None
+    if "\\" in raw_path:
+        errors.append(f"[CRIT] diff.path.{context}: backslash path rejected: {raw_path}")
+        return None
+    if raw_path.startswith('"') or raw_path.endswith('"') or any(char.isspace() for char in raw_path):
+        errors.append(f"[CRIT] diff.path.{context}: ambiguous or quoted path rejected: {raw_path}")
+        return None
+    if any(part in {"", ".", ".."} for part in raw_path.split("/")):
+        errors.append(f"[CRIT] diff.path.{context}: traversal or empty segment rejected: {raw_path}")
+        return None
+    normalized = PurePosixPath(raw_path).as_posix()
+    if normalized != raw_path:
+        errors.append(f"[CRIT] diff.path.{context}: non-normal path rejected: {raw_path}")
+        return None
+    return normalized
 
-def diff_paths(text: str, err: list[str]) -> set[str]:
-    paths=set()
-    for n,line in enumerate(text.splitlines(), 1):
+
+def strip_prefixed_path(token: str, expected_prefixes: tuple[str, ...], errors: list[str], context: str) -> str | None:
+    if token == "/dev/null":
+        return None
+    for prefix in expected_prefixes:
+        if token.startswith(prefix):
+            return normalize_repo_path(token[len(prefix):], errors, context)
+    errors.append(f"[CRIT] diff.header.{context}: expected prefix {expected_prefixes}, got {token}")
+    return None
+
+
+def parse_diff_paths(diff_text: str, errors: list[str]) -> set[str]:
+    paths: set[str] = set()
+    for line_number, line in enumerate(diff_text.splitlines(), start=1):
         if line.startswith("diff --git "):
-            toks=line.split()
-            if len(toks)!=4: err.append(f"[CRIT] diff.header.line{n}: malformed diff --git header"); continue
-            for tok,pfx,ctx in ((toks[2],("a/",),f"line{n}.old"),(toks[3],("b/",),f"line{n}.new")):
-                p=strip_path(tok,pfx,err,ctx)
-                if p: paths.add(p)
+            collect_diff_git_header_paths(line, line_number, paths, errors)
         elif line.startswith("--- ") or line.startswith("+++ "):
-            toks=line.split(); old=line.startswith("--- "); pref=("a/",) if old else ("b/",); side="old" if old else "new"
-            if len(toks)!=2: err.append(f"[CRIT] diff.header.line{n}: malformed {'---' if old else '+++'} header"); continue
-            p=strip_path(toks[1], pref, err, f"line{n}.{side}")
-            if p: paths.add(p)
+            collect_file_header_path(line, line_number, paths, errors)
         elif line.startswith("rename from ") or line.startswith("rename to "):
-            key="rename_from" if line.startswith("rename from ") else "rename_to"; raw=line.split(" ",2)[2]
-            p=norm_path(raw, err, f"line{n}.{key}")
-            if p: paths.add(p)
+            collect_rename_path(line, line_number, paths, errors)
     return paths
 
-def validate_scope(text: str, agent: str, err: list[str]) -> None:
-    pref=f"profiles/{agent}/"
-    for p in sorted(diff_paths(text, err)):
-        if not p.startswith(pref): err.append(f"[CRIT] change.path_scope: {p} is outside {pref}")
 
-def git_diff(root: Path, agent: str, staged=False) -> str:
-    cmd=["git","diff"] + (["--staged"] if staged else []) + ["--", f"profiles/{agent}"]
-    r=subprocess.run(cmd,cwd=root,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=False)
-    if r.returncode not in (0,1): raise RuntimeError(r.stderr.strip() or "git diff failed")
-    return r.stdout
+def collect_diff_git_header_paths(line: str, line_number: int, paths: set[str], errors: list[str]) -> None:
+    tokens = line.split()
+    if len(tokens) != 4:
+        errors.append(f"[CRIT] diff.header.line{line_number}: malformed diff --git header")
+        return
+    for token, prefixes, context in (
+        (tokens[2], ("a/",), f"line{line_number}.old"),
+        (tokens[3], ("b/",), f"line{line_number}.new"),
+    ):
+        path = strip_prefixed_path(token, prefixes, errors, context)
+        if path:
+            paths.add(path)
 
-def git_clean(root: Path, agent: str, err: list[str]) -> None:
-    r=subprocess.run(["git","status","--porcelain","--",f"profiles/{agent}"],cwd=root,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=False)
-    if r.returncode: err.append(f"[CRIT] git.clean: {r.stderr.strip() or 'git status failed'}")
-    elif r.stdout.strip(): err.append(f"[CRIT] git.clean: unmanaged changes under profiles/{agent}/")
 
-def patch_check(root: Path, text: str, err: list[str]) -> None:
-    r=subprocess.run(["git","apply","--check"],cwd=root,input=text,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=False)
-    if r.returncode: err.append(f"[CRIT] git.apply_check: {r.stderr.strip() or 'patch does not apply'}")
+def collect_file_header_path(line: str, line_number: int, paths: set[str], errors: list[str]) -> None:
+    tokens = line.split()
+    marker = "---" if line.startswith("--- ") else "+++"
+    if len(tokens) != 2:
+        errors.append(f"[CRIT] diff.header.line{line_number}: malformed {marker} header")
+        return
+    is_old = marker == "---"
+    prefixes = ("a/",) if is_old else ("b/",)
+    side = "old" if is_old else "new"
+    path = strip_prefixed_path(tokens[1], prefixes, errors, f"line{line_number}.{side}")
+    if path:
+        paths.add(path)
 
-def load_approval_file(root: Path, cid: str, expected_hash: str|None, seen: dict[str,str], ap: Path, err: list[str]) -> dict[str,Any]|None:
+
+def collect_rename_path(line: str, line_number: int, paths: set[str], errors: list[str]) -> None:
+    if line.startswith("rename from "):
+        raw_path = line[len("rename from "):]
+        context = f"line{line_number}.rename_from"
+    else:
+        raw_path = line[len("rename to "):]
+        context = f"line{line_number}.rename_to"
+    path = normalize_repo_path(raw_path, errors, context)
+    if path:
+        paths.add(path)
+
+
+def validate_diff_path_scope(diff_text: str, agent: str, errors: list[str]) -> None:
+    profile_prefix = f"profiles/{agent}/"
+    for path in sorted(parse_diff_paths(diff_text, errors)):
+        if not path.startswith(profile_prefix):
+            errors.append(f"[CRIT] change.path_scope: {path} is outside {profile_prefix}")
+
+
+def git_diff(root: Path, agent: str, staged: bool = False) -> str:
+    command = ["git", "diff"]
+    if staged:
+        command.append("--staged")
+    command.extend(["--", f"profiles/{agent}"])
+    process = subprocess.run(command, cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if process.returncode not in (0, 1):
+        raise RuntimeError(process.stderr.strip() or "git diff failed")
+    return process.stdout
+
+
+def check_git_clean(root: Path, agent: str, errors: list[str]) -> None:
+    process = subprocess.run(
+        ["git", "status", "--porcelain", "--", f"profiles/{agent}"],
+        cwd=root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if process.returncode:
+        errors.append(f"[CRIT] git.clean: {process.stderr.strip() or 'git status failed'}")
+    elif process.stdout.strip():
+        errors.append(f"[CRIT] git.clean: unmanaged changes under profiles/{agent}/")
+
+
+def check_patch_applicable(root: Path, diff_text: str, errors: list[str]) -> None:
+    process = subprocess.run(
+        ["git", "apply", "--check"],
+        cwd=root,
+        input=diff_text,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if process.returncode:
+        errors.append(f"[CRIT] git.apply_check: {process.stderr.strip() or 'patch does not apply'}")
+
+
+def load_approval_record(
+    root: Path,
+    change_id: str,
+    expected_hash: str | None,
+    seen_approvers: dict[str, str],
+    approval_file: Path,
+    errors: list[str],
+) -> dict[str, Any] | None:
     try:
-        a=yload(ap)
-        if not isinstance(a, dict): err.append(f"[CRIT] approval.{ap.name}: must be a mapping"); return None
-        err += schema_errors(a, root/"schemas"/"approval-record.schema.json", f"approval-record.{ap.name}")
-        if not is_dt(a.get("created_at")): err.append(f"[CRIT] approval.{ap.name}.created_at: must be RFC3339 date-time, got {a.get('created_at')!r}")
-        if a.get("change_id") != cid: err.append(f"[CRIT] approval.{ap.name}: change_id mismatch")
-        if a.get("diff_sha256") != expected_hash: err.append(f"[CRIT] approval.{ap.name}: diff hash mismatch")
-        who=a.get("approver"); dec=a.get("decision")
-        if dec=="approve" and who:
-            if who in seen: err.append(f"[CRIT] approval.duplicate_approver: {who} appears in both {seen[who]} and {ap.name}")
-            else: seen[str(who)]=ap.name
-        a["_file"]=ap.name
-        return a
-    except Exception as e:
-        err.append(f"[CRIT] approval.{ap.name}: {e}")
+        approval = load_yaml(approval_file)
+    except Exception as exc:
+        errors.append(f"[CRIT] approval.{approval_file.name}: {exc}")
         return None
-
-def collect_change(root: Path, cid: str, *, enforce_threshold: bool, check_git_clean=False, check_patch_applicable=False) -> tuple[list[str], dict[str,Any]|None, list[dict[str,Any]]]:
-    err=validate_policy(root); apps=[]; d=change_dir(root,cid)
-    if not d.exists(): return [*err, f"[CRIT] change.dir: missing {d}"], None, []
-    prop=load_change(root,cid,err); fp=d/"diff.patch"; text=fp.read_text(encoding="utf-8") if fp.exists() else ""
-    if not fp.exists(): err.append(f"[CRIT] change.diff: missing {fp}")
-    if prop:
-        exp=prop.get("diff_sha256")
-        if exp != sha256_text(text): err.append("[CRIT] change.diff_sha256: proposal hash does not match diff.patch")
-        agent=prop.get("agent")
-        if not isinstance(agent,str) or not agent: err.append("[CRIT] change.agent: missing or invalid agent")
+    if not isinstance(approval, dict):
+        errors.append(f"[CRIT] approval.{approval_file.name}: must be a mapping")
+        return None
+    errors.extend(validate_with_schema(approval, root / "schemas" / "approval-record.schema.json", f"approval-record.{approval_file.name}"))
+    validate_required_date_time(approval.get("created_at"), errors, f"approval.{approval_file.name}.created_at")
+    if approval.get("change_id") != change_id:
+        errors.append(f"[CRIT] approval.{approval_file.name}: change_id mismatch")
+    if approval.get("diff_sha256") != expected_hash:
+        errors.append(f"[CRIT] approval.{approval_file.name}: diff hash mismatch")
+    approver = approval.get("approver")
+    decision = approval.get("decision")
+    if decision == "approve" and approver:
+        if approver in seen_approvers:
+            errors.append(
+                f"[CRIT] approval.duplicate_approver: {approver} appears in both "
+                f"{seen_approvers[approver]} and {approval_file.name}"
+            )
         else:
-            validate_scope(text, agent, err)
-            if check_git_clean: git_clean(root, agent, err)
-            if check_patch_applicable and text: patch_check(root, text, err)
-        seen={}; ad=d/"approvals"
-        if ad.exists():
-            for ap in sorted(ad.glob("*.yaml")):
-                rec=load_approval_file(root, cid, exp, seen, ap, err)
-                if rec is not None: apps.append(rec)
-        if any(a.get("decision")=="reject" for a in apps): err.append("[CRIT] approval.status: at least one rejection is present")
-        if enforce_threshold:
-            approved={a.get("approver") for a in apps if a.get("decision")=="approve" and a.get("approver")}
-            risk=str(prop.get("risk_level","medium")); need=risk_approvals(root).get(risk,1); declared=int(prop.get("required_approvals") or need)
-            if declared != need: err.append(f"[CRIT] approval.required_approvals: proposal declares {declared}, policy requires {need}")
-            if len(approved) < need: err.append(f"[CRIT] approval.threshold: {len(approved)} approvals, require {need}")
-    return err, prop, apps
+            seen_approvers[str(approver)] = approval_file.name
+    approval["_file"] = approval_file.name
+    return approval
 
-def change_status(root: Path, prop: dict, apps: list[dict[str,Any]]) -> str:
-    if any(a.get("decision")=="reject" for a in apps): return "rejected"
-    approved={a.get("approver") for a in apps if a.get("decision")=="approve" and a.get("approver")}
-    req=int(prop.get("required_approvals") or risk_approvals(root).get(str(prop.get("risk_level","medium")),1))
-    return "approved" if len(approved)>=req else ("partially_approved" if apps else "proposed")
 
-def trusted_status(root: Path, cid: str) -> tuple[str, dict[str,Any]|None, list[dict[str,Any]], list[str]]:
-    err, prop, apps = collect_change(root, cid, enforce_threshold=False)
-    if err or prop is None: return "invalid", prop, apps, err
-    return change_status(root, prop, apps), prop, apps, err
+def collect_approval_records(root: Path, change_id: str, expected_hash: str | None, approvals_dir: Path, errors: list[str]) -> list[dict[str, Any]]:
+    approvals: list[dict[str, Any]] = []
+    seen_approvers: dict[str, str] = {}
+    if not approvals_dir.exists():
+        return approvals
+    for approval_file in sorted(approvals_dir.glob("*.yaml")):
+        approval = load_approval_record(root, change_id, expected_hash, seen_approvers, approval_file, errors)
+        if approval is not None:
+            approvals.append(approval)
+    return approvals
 
-def validate_change(root: Path, cid: str, check_git_clean=False, check_patch_applicable=False) -> int:
-    err, _prop, _apps = collect_change(root, cid, enforce_threshold=True, check_git_clean=check_git_clean, check_patch_applicable=check_patch_applicable)
-    for e in err: print(e)
-    return 2 if err else 0
 
-def cmd_changes_propose(a) -> int:
-    root=Path(a.root).resolve(); agent=a.agent
-    policy_err = validate_policy(root)
-    if policy_err:
-        for e in policy_err: print(e)
-        return 2
-    if not NAME_RE.match(agent): print(f"[CRIT] change.agent: invalid agent name {agent!r}"); return 2
-    text=git_diff(root,agent,staged=a.staged)
-    if not text.strip() and not a.allow_empty: print("[CRIT] change.diff: no Git diff found for profile"); return 2
-    digest=sha256_text(text); cid=f"{utc_now_compact()}_{agent}_{digest[:10]}"; d=change_dir(root,cid)
-    if d.exists(): print(f"[CRIT] change.dir: already exists {d}"); return 2
-    prop={"schema_version":1,"change_id":cid,"agent":agent,"title":a.title,"summary":a.summary,"reason":a.reason,"risk_level":a.risk_level,"created_at":utc_now_iso(),"created_by":a.created_by,"diff_sha256":digest,"required_approvals":risk_approvals(root)[a.risk_level],"status":"proposed","rollback":{"strategy":"git_first","note":a.rollback_note},"validation":{"required_before_apply":["changes verify","profile validate","git status clean","rollback point"],"note":a.validation_note}}
-    ywrite(d/"proposal.yaml", prop); (d/"diff.patch").write_text(text,encoding="utf-8"); (d/"approvals").mkdir(parents=True,exist_ok=True); (d/"README.md").write_text(f"# Change {cid}\n\nAgent: `{agent}`\n\nTitle: {a.title}\n",encoding="utf-8"); print(cid); return 0
+def collect_change_validation(
+    root: Path,
+    change_id: str,
+    *,
+    enforce_threshold: bool,
+    reject_is_error: bool,
+    require_git_clean: bool = False,
+    require_patch_applicable: bool = False,
+) -> ChangeValidation:
+    result = ChangeValidation()
+    result.errors.extend(validate_policy(root))
+    directory = change_dir(root, change_id)
+    if not directory.exists():
+        result.errors.append(f"[CRIT] change.dir: missing {directory}")
+        return result
+    proposal = load_change_proposal(root, change_id, result.errors)
+    result.proposal = proposal
+    diff_file = directory / "diff.patch"
+    if not diff_file.exists():
+        result.errors.append(f"[CRIT] change.diff: missing {diff_file}")
+        diff_text = ""
+    else:
+        diff_text = diff_file.read_text(encoding="utf-8")
+    if proposal is None:
+        return result
+    expected_hash = proposal.get("diff_sha256")
+    if expected_hash != sha256_text(diff_text):
+        result.errors.append("[CRIT] change.diff_sha256: proposal hash does not match diff.patch")
+    agent = proposal.get("agent")
+    if not isinstance(agent, str) or not agent:
+        result.errors.append("[CRIT] change.agent: missing or invalid agent")
+    else:
+        validate_diff_path_scope(diff_text, agent, result.errors)
+        if require_git_clean:
+            check_git_clean(root, agent, result.errors)
+        if require_patch_applicable and diff_text:
+            check_patch_applicable(root, diff_text, result.errors)
+    result.approvals = collect_approval_records(root, change_id, expected_hash, directory / "approvals", result.errors)
+    if reject_is_error and any(approval.get("decision") == "reject" for approval in result.approvals):
+        result.errors.append("[CRIT] approval.status: at least one rejection is present")
+    if enforce_threshold:
+        validate_approval_threshold(root, proposal, result.approvals, result.errors)
+    return result
 
-def cmd_changes_list(a) -> int:
-    root=Path(a.root).resolve(); cr=root/"changes"
-    if not cr.exists(): return 0
-    for d in sorted(cr.iterdir()):
-        if d.is_dir() and (d/"proposal.yaml").exists():
-            status, prop, _apps, _err = trusted_status(root, d.name)
-            if prop and (not a.agent or prop.get("agent")==a.agent): print(f"{d.name}\t{prop.get('agent')}\t{prop.get('risk_level')}\t{status}\t{prop.get('title')}")
+
+def validate_approval_threshold(root: Path, proposal: dict[str, Any], approvals: list[dict[str, Any]], errors: list[str]) -> None:
+    risk = str(proposal.get("risk_level", "medium"))
+    expected_required = risk_approvals(root).get(risk, 1)
+    declared_required = int(proposal.get("required_approvals") or expected_required)
+    if declared_required != expected_required:
+        errors.append(
+            f"[CRIT] approval.required_approvals: proposal declares {declared_required}, "
+            f"policy requires {expected_required}"
+        )
+    approved_by = {
+        approval.get("approver")
+        for approval in approvals
+        if approval.get("decision") == "approve" and approval.get("approver")
+    }
+    if len(approved_by) < expected_required:
+        errors.append(f"[CRIT] approval.threshold: {len(approved_by)} approvals, require {expected_required}")
+
+
+def display_change_status(root: Path, proposal: dict[str, Any], approvals: list[dict[str, Any]]) -> str:
+    if any(approval.get("decision") == "reject" for approval in approvals):
+        return "rejected"
+    approved_by = {
+        approval.get("approver")
+        for approval in approvals
+        if approval.get("decision") == "approve" and approval.get("approver")
+    }
+    required = int(proposal.get("required_approvals") or risk_approvals(root).get(str(proposal.get("risk_level", "medium")), 1))
+    if len(approved_by) >= required:
+        return "approved"
+    if approvals:
+        return "partially_approved"
+    return "proposed"
+
+
+def trusted_status(root: Path, change_id: str) -> tuple[str, ChangeValidation]:
+    validation = collect_change_validation(root, change_id, enforce_threshold=False, reject_is_error=False)
+    if validation.errors or validation.proposal is None:
+        return "invalid", validation
+    return display_change_status(root, validation.proposal, validation.approvals), validation
+
+
+def validate_change(root: Path, change_id: str, *, require_git_clean: bool = False, require_patch_applicable: bool = False) -> int:
+    validation = collect_change_validation(
+        root,
+        change_id,
+        enforce_threshold=True,
+        reject_is_error=True,
+        require_git_clean=require_git_clean,
+        require_patch_applicable=require_patch_applicable,
+    )
+    for error in validation.errors:
+        print(error)
+    return 2 if validation.errors else 0
+
+
+def build_change_proposal(args, root: Path, diff_text: str, digest: str, change_id: str) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "change_id": change_id,
+        "agent": args.agent,
+        "title": args.title,
+        "summary": args.summary,
+        "reason": args.reason,
+        "risk_level": args.risk_level,
+        "created_at": utc_now_iso(),
+        "created_by": args.created_by,
+        "diff_sha256": digest,
+        "required_approvals": risk_approvals(root)[args.risk_level],
+        "status": "proposed",
+        "rollback": {"strategy": "git_first", "note": args.rollback_note},
+        "validation": {
+            "required_before_apply": ["changes verify", "profile validate", "git status clean", "rollback point"],
+            "note": args.validation_note,
+        },
+    }
+
+
+def build_approval_record(change_id: str, decision: str, approver: str, comment: str, diff_sha256: str | None) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "change_id": change_id,
+        "decision": decision,
+        "approver": approver,
+        "created_at": utc_now_iso(),
+        "comment": comment,
+        "diff_sha256": diff_sha256,
+        "acknowledgements": {
+            "reviewed_diff": True,
+            "understands_apply_not_automatic": True,
+            "secret_values_not_reviewed": True,
+            "business_orchestration_not_authorized": True,
+        },
+    }
+
+
+def validate_generated_approval(root: Path, record: dict[str, Any]) -> list[str]:
+    errors = validate_with_schema(record, root / "schemas" / "approval-record.schema.json", "approval-record.generated")
+    validate_required_date_time(record.get("created_at"), errors, "approval.generated.created_at")
+    return errors
+
+
+def cmd_validate(args) -> int:
+    root = Path(args.root).resolve()
+    if args.agent:
+        return validate_profile(root, args.agent)
+    code = 0
+    for item in load_inventory(root).get("agents", []):
+        if not isinstance(item, dict) or not item.get("name"):
+            print("[CRIT] inventory: invalid agent entry")
+            code = 2
+            continue
+        code = max(code, validate_profile(root, item["name"]))
+    return code
+
+
+def cmd_inventory_list(args) -> int:
+    root = Path(args.root).resolve()
+    for item in load_inventory(root).get("agents", []):
+        if isinstance(item, dict):
+            print(f"{item.get('name')}\t{item.get('status')}\t{item.get('profile_dir')}")
     return 0
 
-def cmd_changes_show(a) -> int:
-    root=Path(a.root).resolve(); status, prop, apps, err = trusted_status(root, a.change_id)
-    if prop is None:
-        for e in err: print(e)
+
+def cmd_validate_schemas(args) -> int:
+    root = Path(args.root).resolve()
+    errors: list[str] = []
+    for path in sorted((root / "schemas").glob("*.schema.json")):
+        try:
+            if jsonschema is not None:
+                jsonschema.Draft202012Validator.check_schema(load_json(path))
+        except Exception as exc:
+            errors.append(f"[CRIT] schema.{path.name}: {exc}")
+    for error in errors:
+        print(error)
+    return 2 if errors else 0
+
+
+def cmd_policy_effective(args) -> int:
+    data = effective_policy(Path(args.root).resolve())
+    if args.json:
+        print(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    print(f"policy_file: {data['policy_file']}")
+    print(f"apply_enabled: {str(data['apply_enabled']).lower()}")
+    print(f"global_forbidden: {data['global_forbidden']}")
+    print(f"risk_approvals: {data['risk_approvals']}")
+    print(f"critical_change_paths: {data['critical_change_paths']}")
+    return 0
+
+
+def cmd_policy_explain(args) -> int:
+    root = Path(args.root).resolve()
+    target = args.target
+    thresholds = risk_approvals(root)
+    if target in thresholds:
+        print(f"risk: {target}")
+        print(f"required_approvals: {thresholds[target]}")
+        print("source: policies/global-permissions.yaml risk_defaults")
+        return 0
+    matches = [pattern for pattern in critical_paths(root) if fnmatch.fnmatchcase(target, pattern)]
+    print(f"path: {target}")
+    print(f"critical: {str(bool(matches)).lower()}")
+    if matches:
+        print("matched_patterns:")
+        for pattern in matches:
+            print(f"  - {pattern}")
+    else:
+        print("matched_patterns: []")
+    return 0
+
+
+def cmd_policy_check(args) -> int:
+    errors = validate_policy(Path(args.root).resolve())
+    for error in errors:
+        print(error)
+    return 2 if errors else 0
+
+
+def cmd_changes_propose(args) -> int:
+    root = Path(args.root).resolve()
+    policy_errors = validate_policy(root)
+    if policy_errors:
+        for error in policy_errors:
+            print(error)
         return 2
-    if a.json: print(json.dumps({"proposal":prop,"status":status,"approvals":apps,"errors":err},ensure_ascii=False,indent=2)); return 0
-    print(f"# {a.change_id}\nagent: {prop.get('agent')}\ntitle: {prop.get('title')}\nrisk: {prop.get('risk_level')}\nstatus: {status}\ndiff_sha256: {prop.get('diff_sha256')}\napprovals: {len([x for x in apps if x.get('decision')=='approve'])}/{prop.get('required_approvals')}")
-    if err:
+    if not NAME_RE.match(args.agent):
+        print(f"[CRIT] change.agent: invalid agent name {args.agent!r}")
+        return 2
+    diff_text = git_diff(root, args.agent, staged=args.staged)
+    if not diff_text.strip() and not args.allow_empty:
+        print("[CRIT] change.diff: no Git diff found for profile")
+        return 2
+    digest = sha256_text(diff_text)
+    change_id = f"{utc_now_compact()}_{args.agent}_{digest[:10]}"
+    directory = change_dir(root, change_id)
+    if directory.exists():
+        print(f"[CRIT] change.dir: already exists {directory}")
+        return 2
+    proposal = build_change_proposal(args, root, diff_text, digest, change_id)
+    write_yaml(directory / "proposal.yaml", proposal)
+    (directory / "diff.patch").write_text(diff_text, encoding="utf-8")
+    (directory / "approvals").mkdir(parents=True, exist_ok=True)
+    (directory / "README.md").write_text(
+        f"# Change {change_id}\n\nAgent: `{args.agent}`\n\nTitle: {args.title}\n",
+        encoding="utf-8",
+    )
+    print(change_id)
+    return 0
+
+
+def cmd_changes_list(args) -> int:
+    root = Path(args.root).resolve()
+    changes_root = root / "changes"
+    if not changes_root.exists():
+        return 0
+    for directory in sorted(changes_root.iterdir()):
+        if not directory.is_dir() or not (directory / "proposal.yaml").exists():
+            continue
+        status, validation = trusted_status(root, directory.name)
+        proposal = validation.proposal
+        if proposal is None:
+            continue
+        if args.agent and proposal.get("agent") != args.agent:
+            continue
+        print(f"{directory.name}\t{proposal.get('agent')}\t{proposal.get('risk_level')}\t{status}\t{proposal.get('title')}")
+    return 0
+
+
+def cmd_changes_show(args) -> int:
+    root = Path(args.root).resolve()
+    status, validation = trusted_status(root, args.change_id)
+    proposal = validation.proposal
+    if proposal is None:
+        for error in validation.errors:
+            print(error)
+        return 2
+    if args.json:
+        print(json.dumps({"proposal": proposal, "status": status, "approvals": validation.approvals, "errors": validation.errors}, ensure_ascii=False, indent=2))
+        return 0
+    approval_count = len([approval for approval in validation.approvals if approval.get("decision") == "approve"])
+    print(f"# {args.change_id}")
+    print(f"agent: {proposal.get('agent')}")
+    print(f"title: {proposal.get('title')}")
+    print(f"risk: {proposal.get('risk_level')}")
+    print(f"status: {status}")
+    print(f"diff_sha256: {proposal.get('diff_sha256')}")
+    print(f"approvals: {approval_count}/{proposal.get('required_approvals')}")
+    if validation.errors:
         print("errors:")
-        for e in err: print(f"  - {e}")
+        for error in validation.errors:
+            print(f"  - {error}")
     return 0
 
-def cmd_changes_diff(a) -> int:
-    p=change_dir(Path(a.root).resolve(),a.change_id)/"diff.patch"
-    if not p.exists(): print(f"[CRIT] change.diff: missing {p}"); return 2
-    print(p.read_text(encoding="utf-8"),end=""); return 0
 
-def cmd_changes_approve(a) -> int:
-    root=Path(a.root).resolve(); err, prop, _apps = collect_change(root, a.change_id, enforce_threshold=False)
-    if err or not prop:
-        for e in err: print(e)
+def cmd_changes_diff(args) -> int:
+    diff_file = change_dir(Path(args.root).resolve(), args.change_id) / "diff.patch"
+    if not diff_file.exists():
+        print(f"[CRIT] change.diff: missing {diff_file}")
         return 2
-    if not NAME_RE.match(a.approver): print(f"[CRIT] approval.approver: invalid approver {a.approver!r}"); return 2
-    rec={"schema_version":1,"change_id":a.change_id,"decision":a.decision,"approver":a.approver,"created_at":utc_now_iso(),"comment":a.comment,"diff_sha256":prop.get("diff_sha256"),"acknowledgements":{"reviewed_diff":True,"understands_apply_not_automatic":True,"secret_values_not_reviewed":True,"business_orchestration_not_authorized":True}}
-    rec_err=schema_errors(rec, root/"schemas"/"approval-record.schema.json", "approval-record.generated")
-    if not is_dt(rec.get("created_at")): rec_err.append("[CRIT] approval.generated.created_at: must be RFC3339 date-time")
-    if rec_err:
-        for e in rec_err: print(e)
-        return 2
-    out=change_dir(root,a.change_id)/"approvals"/f"{utc_now_compact()}_{slug(a.approver)}_{a.decision}.yaml"; ywrite(out,rec); print(out.relative_to(root)); return 0
+    print(diff_file.read_text(encoding="utf-8"), end="")
+    return 0
 
-def cmd_changes_verify(a) -> int: return validate_change(Path(a.root).resolve(), a.change_id, check_git_clean=a.check_git_clean, check_patch_applicable=a.check_patch_applicable)
-def cmd_apply(a) -> int: print("apply is intentionally not implemented. This command is reserved until preflight, locking, rollback, and post-apply validation are complete."); return 1
+
+def cmd_changes_approve(args) -> int:
+    root = Path(args.root).resolve()
+    validation = collect_change_validation(root, args.change_id, enforce_threshold=False, reject_is_error=True)
+    if validation.errors or validation.proposal is None:
+        for error in validation.errors:
+            print(error)
+        return 2
+    if not NAME_RE.match(args.approver):
+        print(f"[CRIT] approval.approver: invalid approver {args.approver!r}")
+        return 2
+    record = build_approval_record(args.change_id, args.decision, args.approver, args.comment, validation.proposal.get("diff_sha256"))
+    record_errors = validate_generated_approval(root, record)
+    if record_errors:
+        for error in record_errors:
+            print(error)
+        return 2
+    output_path = change_dir(root, args.change_id) / "approvals" / f"{utc_now_compact()}_{slug(args.approver)}_{args.decision}.yaml"
+    write_yaml(output_path, record)
+    print(output_path.relative_to(root))
+    return 0
+
+
+def cmd_changes_verify(args) -> int:
+    return validate_change(
+        Path(args.root).resolve(),
+        args.change_id,
+        require_git_clean=args.check_git_clean,
+        require_patch_applicable=args.check_patch_applicable,
+    )
+
+
+def validate_change(root: Path, change_id: str, *, require_git_clean: bool = False, require_patch_applicable: bool = False) -> int:
+    validation = collect_change_validation(
+        root,
+        change_id,
+        enforce_threshold=True,
+        reject_is_error=True,
+        require_git_clean=require_git_clean,
+        require_patch_applicable=require_patch_applicable,
+    )
+    for error in validation.errors:
+        print(error)
+    return 2 if validation.errors else 0
+
+
+def cmd_apply(args) -> int:
+    print("apply is intentionally not implemented. This command is reserved until preflight, locking, rollback, and post-apply validation are complete.")
+    return 1
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="hermes-agentops")
+    parser.add_argument("--root", default=".")
+    subcommands = parser.add_subparsers(dest="cmd", required=True)
+
+    validate = subcommands.add_parser("validate")
+    validate.add_argument("agent", nargs="?")
+    validate.add_argument("-v", "--verbose", action="store_true")
+    validate.set_defaults(func=cmd_validate)
+
+    validate_schemas = subcommands.add_parser("validate-schemas")
+    validate_schemas.set_defaults(func=cmd_validate_schemas)
+
+    policy = subcommands.add_parser("policy")
+    policy_subcommands = policy.add_subparsers(dest="policy_cmd", required=True)
+    policy_effective = policy_subcommands.add_parser("effective")
+    policy_effective.add_argument("--json", action="store_true")
+    policy_effective.set_defaults(func=cmd_policy_effective)
+    policy_explain = policy_subcommands.add_parser("explain")
+    policy_explain.add_argument("target")
+    policy_explain.set_defaults(func=cmd_policy_explain)
+    policy_check = policy_subcommands.add_parser("check")
+    policy_check.set_defaults(func=cmd_policy_check)
+
+    inventory = subcommands.add_parser("inventory")
+    inventory_subcommands = inventory.add_subparsers(dest="inventory_cmd", required=True)
+    inventory_list = inventory_subcommands.add_parser("list")
+    inventory_list.set_defaults(func=cmd_inventory_list)
+
+    changes = subcommands.add_parser("changes")
+    change_subcommands = changes.add_subparsers(dest="changes_cmd", required=True)
+    propose = change_subcommands.add_parser("propose")
+    propose.add_argument("agent")
+    propose.add_argument("--title", required=True)
+    propose.add_argument("--summary", required=True)
+    propose.add_argument("--reason", required=True)
+    propose.add_argument("--risk-level", choices=sorted(DEFAULT_RISK_APPROVALS), default="medium")
+    propose.add_argument("--created-by", default="user")
+    propose.add_argument("--rollback-note", default="Rollback with Git-first strategy, then validate.")
+    propose.add_argument("--validation-note", default="Run changes verify and profile validation before any future apply.")
+    propose.add_argument("--staged", action="store_true")
+    propose.add_argument("--allow-empty", action="store_true")
+    propose.set_defaults(func=cmd_changes_propose)
+
+    list_changes = change_subcommands.add_parser("list")
+    list_changes.add_argument("agent", nargs="?")
+    list_changes.set_defaults(func=cmd_changes_list)
+    show = change_subcommands.add_parser("show")
+    show.add_argument("change_id")
+    show.add_argument("--json", action="store_true")
+    show.set_defaults(func=cmd_changes_show)
+    diff = change_subcommands.add_parser("diff")
+    diff.add_argument("change_id")
+    diff.set_defaults(func=cmd_changes_diff)
+    approve = change_subcommands.add_parser("approve")
+    approve.add_argument("change_id")
+    approve.add_argument("--approver", required=True)
+    approve.add_argument("--decision", choices=["approve", "reject"], default="approve")
+    approve.add_argument("--comment", default="")
+    approve.set_defaults(func=cmd_changes_approve)
+    verify = change_subcommands.add_parser("verify")
+    verify.add_argument("change_id")
+    verify.add_argument("--check-git-clean", action="store_true")
+    verify.add_argument("--check-patch-applicable", action="store_true")
+    verify.set_defaults(func=cmd_changes_verify)
+
+    apply_parser = subcommands.add_parser("apply")
+    apply_parser.add_argument("change_id", nargs="?")
+    apply_parser.set_defaults(func=cmd_apply)
+    return parser
+
 
 def main(argv=None) -> int:
-    parser=argparse.ArgumentParser(prog="hermes-agentops"); parser.add_argument("--root",default="."); sub=parser.add_subparsers(dest="cmd",required=True)
-    p=sub.add_parser("validate"); p.add_argument("agent",nargs="?"); p.add_argument("-v","--verbose",action="store_true"); p.set_defaults(func=cmd_validate)
-    p=sub.add_parser("validate-schemas"); p.set_defaults(func=cmd_validate_schemas)
-    pol=sub.add_parser("policy"); ps=pol.add_subparsers(dest="policy_cmd",required=True)
-    p=ps.add_parser("effective"); p.add_argument("--json",action="store_true"); p.set_defaults(func=cmd_policy_effective)
-    p=ps.add_parser("explain"); p.add_argument("target"); p.set_defaults(func=cmd_policy_explain)
-    p=ps.add_parser("check"); p.set_defaults(func=cmd_policy_check)
-    inv=sub.add_parser("inventory"); ins=inv.add_subparsers(dest="inventory_cmd",required=True); p=ins.add_parser("list"); p.set_defaults(func=cmd_inventory_list)
-    ch=sub.add_parser("changes"); cs=ch.add_subparsers(dest="changes_cmd",required=True)
-    p=cs.add_parser("propose"); p.add_argument("agent"); p.add_argument("--title",required=True); p.add_argument("--summary",required=True); p.add_argument("--reason",required=True); p.add_argument("--risk-level",choices=sorted(DEFAULT_RISK),default="medium"); p.add_argument("--created-by",default="user"); p.add_argument("--rollback-note",default="Rollback with Git-first strategy, then validate."); p.add_argument("--validation-note",default="Run changes verify and profile validation before any future apply."); p.add_argument("--staged",action="store_true"); p.add_argument("--allow-empty",action="store_true"); p.set_defaults(func=cmd_changes_propose)
-    p=cs.add_parser("list"); p.add_argument("agent",nargs="?"); p.set_defaults(func=cmd_changes_list)
-    p=cs.add_parser("show"); p.add_argument("change_id"); p.add_argument("--json",action="store_true"); p.set_defaults(func=cmd_changes_show)
-    p=cs.add_parser("diff"); p.add_argument("change_id"); p.set_defaults(func=cmd_changes_diff)
-    p=cs.add_parser("approve"); p.add_argument("change_id"); p.add_argument("--approver",required=True); p.add_argument("--decision",choices=["approve","reject"],default="approve"); p.add_argument("--comment",default=""); p.set_defaults(func=cmd_changes_approve)
-    p=cs.add_parser("verify"); p.add_argument("change_id"); p.add_argument("--check-git-clean",action="store_true"); p.add_argument("--check-patch-applicable",action="store_true"); p.set_defaults(func=cmd_changes_verify)
-    p=sub.add_parser("apply"); p.add_argument("change_id",nargs="?"); p.set_defaults(func=cmd_apply)
-    a=parser.parse_args(argv)
-    try: return int(a.func(a))
-    except Exception as e: print(f"error: {e}", file=sys.stderr); return 2
-if __name__ == "__main__": raise SystemExit(main())
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return int(args.func(args))
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
