@@ -2,7 +2,7 @@
 """Minimal Hermes AgentOps CLI.
 
 Management-plane only: validates governance files, inventory, schemas, and change
-preflight records. It does not apply changes, read secrets, orchestrate business
+workflow records. It does not apply changes, read secrets, orchestrate business
 tasks, or mutate runtime state.
 """
 
@@ -12,7 +12,9 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:
@@ -36,6 +38,7 @@ DEFAULT_GLOBAL_FORBIDDEN = {
     "bypass_hermes_tool_registry",
 }
 RISK_APPROVALS = {"low": 1, "medium": 1, "high": 2, "critical": 2}
+NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
 
 
 def load_yaml(path: Path):
@@ -43,6 +46,14 @@ def load_yaml(path: Path):
         raise RuntimeError("PyYAML is required: python -m pip install pyyaml")
     with path.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def write_yaml(path: Path, data) -> None:
+    if yaml is None:
+        raise RuntimeError("PyYAML is required: python -m pip install pyyaml")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
 
 
 def load_json(path: Path):
@@ -184,6 +195,18 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def utc_now_compact() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def slug(value: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_.-]+", "-", value.strip().lower()).strip("-") or "record"
+
+
 def change_dir(root: Path, change_id: str) -> Path:
     return root / "changes" / change_id
 
@@ -215,6 +238,41 @@ def diff_paths(diff_text: str) -> set[str]:
     return paths
 
 
+def git_diff(root: Path, agent: str, staged: bool = False) -> str:
+    cmd = ["git", "diff"]
+    if staged:
+        cmd.append("--staged")
+    cmd += ["--", f"profiles/{agent}"]
+    proc = subprocess.run(cmd, cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if proc.returncode not in (0, 1):
+        raise RuntimeError(proc.stderr.strip() or "git diff failed")
+    return proc.stdout
+
+
+def approval_records(root: Path, change_id: str) -> list[dict]:
+    records = []
+    approvals_dir = change_dir(root, change_id) / "approvals"
+    if approvals_dir.exists():
+        for path in sorted(approvals_dir.glob("*.yaml")):
+            data = load_yaml(path)
+            if isinstance(data, dict):
+                data["_file"] = path.name
+                records.append(data)
+    return records
+
+
+def change_status(proposal: dict, approvals: list[dict]) -> str:
+    if any(a.get("decision") == "reject" for a in approvals):
+        return "rejected"
+    approved_by = {a.get("approver") for a in approvals if a.get("decision") == "approve" and a.get("approver")}
+    required = int(proposal.get("required_approvals") or RISK_APPROVALS.get(str(proposal.get("risk_level", "medium")), 1))
+    if len(approved_by) >= required:
+        return "approved"
+    if approvals:
+        return "partially_approved"
+    return "proposed"
+
+
 def validate_change(root: Path, change_id: str) -> int:
     errors: list[str] = []
     cdir = change_dir(root, change_id)
@@ -244,8 +302,8 @@ def validate_change(root: Path, change_id: str) -> int:
                 if not path.startswith(f"profiles/{agent}/"):
                     errors.append(f"[CRIT] change.path_scope: {path} is outside profiles/{agent}/")
 
-        approvals_dir = cdir / "approvals"
         approvals = []
+        approvals_dir = cdir / "approvals"
         if approvals_dir.exists():
             for approval_file in sorted(approvals_dir.glob("*.yaml")):
                 try:
@@ -273,6 +331,133 @@ def validate_change(root: Path, change_id: str) -> int:
     for error in errors:
         print(error)
     return 2 if errors else 0
+
+
+def cmd_changes_propose(args) -> int:
+    root = Path(args.root).resolve()
+    agent = args.agent
+    if not NAME_RE.match(agent):
+        print(f"[CRIT] change.agent: invalid agent name {agent!r}")
+        return 2
+    diff_text = git_diff(root, agent, staged=args.staged)
+    if not diff_text.strip() and not args.allow_empty:
+        print("[CRIT] change.diff: no Git diff found for profile")
+        return 2
+    digest = sha256_text(diff_text)
+    change_id = f"{utc_now_compact()}_{agent}_{digest[:10]}"
+    cdir = change_dir(root, change_id)
+    if cdir.exists():
+        print(f"[CRIT] change.dir: already exists {cdir}")
+        return 2
+    required = RISK_APPROVALS[args.risk_level]
+    proposal = {
+        "schema_version": 1,
+        "change_id": change_id,
+        "agent": agent,
+        "title": args.title,
+        "summary": args.summary,
+        "reason": args.reason,
+        "risk_level": args.risk_level,
+        "created_at": utc_now_iso(),
+        "created_by": args.created_by,
+        "diff_sha256": digest,
+        "required_approvals": required,
+        "status": "proposed",
+        "rollback": {"strategy": "git_first", "note": args.rollback_note},
+        "validation": {"required_before_apply": ["changes verify", "profile validate", "git status clean", "rollback point"], "note": args.validation_note},
+    }
+    write_yaml(cdir / "proposal.yaml", proposal)
+    (cdir / "diff.patch").write_text(diff_text, encoding="utf-8")
+    (cdir / "approvals").mkdir(parents=True, exist_ok=True)
+    (cdir / "README.md").write_text(f"# Change {change_id}\n\nAgent: `{agent}`\n\nTitle: {args.title}\n", encoding="utf-8")
+    print(change_id)
+    return 0
+
+
+def cmd_changes_list(args) -> int:
+    root = Path(args.root).resolve()
+    croot = root / "changes"
+    if not croot.exists():
+        return 0
+    for cdir in sorted(croot.iterdir()):
+        if not cdir.is_dir() or not (cdir / "proposal.yaml").exists():
+            continue
+        proposal = load_yaml(cdir / "proposal.yaml")
+        if not isinstance(proposal, dict):
+            continue
+        if args.agent and proposal.get("agent") != args.agent:
+            continue
+        records = approval_records(root, cdir.name)
+        print(f"{cdir.name}\t{proposal.get('agent')}\t{proposal.get('risk_level')}\t{change_status(proposal, records)}\t{proposal.get('title')}")
+    return 0
+
+
+def cmd_changes_show(args) -> int:
+    root = Path(args.root).resolve()
+    errors: list[str] = []
+    proposal = load_change_proposal(root, args.change_id, errors)
+    if errors or not proposal:
+        for error in errors:
+            print(error)
+        return 2
+    records = approval_records(root, args.change_id)
+    if args.json:
+        print(json.dumps({"proposal": proposal, "status": change_status(proposal, records), "approvals": records}, ensure_ascii=False, indent=2))
+        return 0
+    print(f"# {args.change_id}")
+    print(f"agent: {proposal.get('agent')}")
+    print(f"title: {proposal.get('title')}")
+    print(f"risk: {proposal.get('risk_level')}")
+    print(f"status: {change_status(proposal, records)}")
+    print(f"diff_sha256: {proposal.get('diff_sha256')}")
+    print(f"approvals: {len([r for r in records if r.get('decision') == 'approve'])}/{proposal.get('required_approvals')}")
+    return 0
+
+
+def cmd_changes_diff(args) -> int:
+    root = Path(args.root).resolve()
+    path = change_dir(root, args.change_id) / "diff.patch"
+    if not path.exists():
+        print(f"[CRIT] change.diff: missing {path}")
+        return 2
+    print(path.read_text(encoding="utf-8"), end="")
+    return 0
+
+
+def cmd_changes_approve(args) -> int:
+    root = Path(args.root).resolve()
+    errors: list[str] = []
+    proposal = load_change_proposal(root, args.change_id, errors)
+    if errors or not proposal:
+        for error in errors:
+            print(error)
+        return 2
+    diff_file = change_dir(root, args.change_id) / "diff.patch"
+    if not diff_file.exists():
+        print(f"[CRIT] change.diff: missing {diff_file}")
+        return 2
+    if sha256_text(diff_file.read_text(encoding="utf-8")) != proposal.get("diff_sha256"):
+        print("[CRIT] change.diff_sha256: proposal hash does not match diff.patch")
+        return 2
+    record = {
+        "schema_version": 1,
+        "change_id": args.change_id,
+        "decision": args.decision,
+        "approver": args.approver,
+        "created_at": utc_now_iso(),
+        "comment": args.comment,
+        "diff_sha256": proposal.get("diff_sha256"),
+        "acknowledgements": {
+            "reviewed_diff": True,
+            "understands_apply_not_automatic": True,
+            "secret_values_not_reviewed": True,
+            "business_orchestration_not_authorized": True,
+        },
+    }
+    path = change_dir(root, args.change_id) / "approvals" / f"{utc_now_compact()}_{slug(args.approver)}_{args.decision}.yaml"
+    write_yaml(path, record)
+    print(path.relative_to(root))
+    return 0
 
 
 def cmd_changes_verify(args) -> int:
@@ -305,6 +490,39 @@ def main(argv=None) -> int:
 
     changes = sub.add_parser("changes")
     changes_sub = changes.add_subparsers(dest="changes_cmd", required=True)
+    p = changes_sub.add_parser("propose")
+    p.add_argument("agent")
+    p.add_argument("--title", required=True)
+    p.add_argument("--summary", required=True)
+    p.add_argument("--reason", required=True)
+    p.add_argument("--risk-level", choices=sorted(RISK_APPROVALS), default="medium")
+    p.add_argument("--created-by", default="user")
+    p.add_argument("--rollback-note", default="Rollback with Git-first strategy, then validate.")
+    p.add_argument("--validation-note", default="Run changes verify and profile validation before any future apply.")
+    p.add_argument("--staged", action="store_true")
+    p.add_argument("--allow-empty", action="store_true")
+    p.set_defaults(func=cmd_changes_propose)
+
+    p = changes_sub.add_parser("list")
+    p.add_argument("agent", nargs="?")
+    p.set_defaults(func=cmd_changes_list)
+
+    p = changes_sub.add_parser("show")
+    p.add_argument("change_id")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_changes_show)
+
+    p = changes_sub.add_parser("diff")
+    p.add_argument("change_id")
+    p.set_defaults(func=cmd_changes_diff)
+
+    p = changes_sub.add_parser("approve")
+    p.add_argument("change_id")
+    p.add_argument("--approver", required=True)
+    p.add_argument("--decision", choices=["approve", "reject"], default="approve")
+    p.add_argument("--comment", default="")
+    p.set_defaults(func=cmd_changes_approve)
+
     p = changes_sub.add_parser("verify")
     p.add_argument("change_id")
     p.set_defaults(func=cmd_changes_verify)
