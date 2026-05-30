@@ -41,7 +41,6 @@ def run_agentops(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def write_rejected_change(root: Path) -> str:
-    change_id = "20260530T010000Z_agentops_rejected"
     diff_text = """diff --git a/profiles/agentops/SOUL.md b/profiles/agentops/SOUL.md
 --- a/profiles/agentops/SOUL.md
 +++ b/profiles/agentops/SOUL.md
@@ -50,6 +49,7 @@ def write_rejected_change(root: Path) -> str:
 +new
 """
     digest = sha256_text(diff_text)
+    change_id = f"20260530T010000Z_agentops_{digest[:10]}"
     cdir = root / "changes" / change_id
     (cdir / "approvals").mkdir(parents=True)
     (cdir / "diff.patch").write_text(diff_text, encoding="utf-8")
