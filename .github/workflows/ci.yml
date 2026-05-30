@@ -22,17 +22,17 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pyyaml jsonschema pytest ruff
 
-      - name: Compile CLI if present
+      - name: Compile CLI
         run: |
-          if [ -f scripts/hermes-agentops ]; then
-            python -m py_compile scripts/hermes-agentops
-          fi
+          python -m py_compile scripts/hermes-agentops
 
-      - name: Validate profiles if CLI is present
+      - name: Validate schemas
         run: |
-          if [ -f scripts/hermes-agentops ]; then
-            python scripts/hermes-agentops validate -v
-          fi
+          python scripts/hermes-agentops validate-schemas
+
+      - name: Validate profiles
+        run: |
+          python scripts/hermes-agentops validate -v
 
       - name: Secret and runtime file guard
         run: |
@@ -42,7 +42,6 @@ jobs:
             case "$path" in
               ./.git/*) continue ;;
               */.env.template) continue ;;
-              *.md) ;;
             esac
             bad="$bad$path\n"
           done < <(find . \

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/change-proposal.schema.json",
+  "title": "Hermes AgentOps Change Proposal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "change_id", "agent", "title", "summary", "reason", "risk_level", "created_at", "created_by", "diff_sha256", "required_approvals", "status", "rollback", "validation"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "change_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}$"},
+    "agent": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "title": {"type": "string", "minLength": 1},
+    "summary": {"type": "string", "minLength": 1},
+    "reason": {"type": "string", "minLength": 1},
+    "risk_level": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
+    "created_at": {"type": "string"},
+    "created_by": {"type": "string", "minLength": 1},
+    "diff_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "required_approvals": {"type": "integer", "minimum": 1},
+    "status": {"type": "string", "enum": ["proposed", "partially_approved", "approved", "rejected", "superseded"]},
+    "rollback": {"type": "object", "additionalProperties": true, "required": ["strategy", "note"], "properties": {"strategy": {"type": "string", "const": "git_first"}, "note": {"type": "string", "minLength": 1}}},
+    "validation": {"type": "object", "additionalProperties": true, "required": ["required_before_apply", "note"], "properties": {"required_before_apply": {"type": "array", "items": {"type": "string"}, "minItems": 1}, "note": {"type": "string", "minLength": 1}}}
+  }
+}
