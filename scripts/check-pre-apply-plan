@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""Validate pre-apply plan examples.
+
+This script is intentionally read-only. It validates plan files against
+schemas/pre-apply-plan.schema.json and never applies patches or mutates profiles.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import jsonschema
+import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+SCHEMA = ROOT / "schemas" / "pre-apply-plan.schema.json"
+DEFAULT_PLAN = ROOT / "docs" / "examples" / "pre-apply-plan.example.yaml"
+
+
+def load_yaml(path: Path):
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def load_json(path: Path):
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(argv or sys.argv[1:])
+    plan_paths = [Path(value) for value in argv] if argv else [DEFAULT_PLAN]
+
+    schema = load_json(SCHEMA)
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+
+    errors: list[str] = []
+    for path in plan_paths:
+        plan = load_yaml(path)
+        for error in sorted(validator.iter_errors(plan), key=lambda item: list(item.path)):
+            location = ".".join(str(part) for part in error.path) or "<root>"
+            errors.append(f"{path}: {location}: {error.message}")
+        if isinstance(plan, dict) and plan.get("mutation_enabled") is not False:
+            errors.append(f"{path}: mutation_enabled must remain false")
+
+    if errors:
+        print("pre-apply plan validation failed:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+
+    print("pre-apply plan validation passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
