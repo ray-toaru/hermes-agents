@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal Hermes AgentOps CLI.
+"""Hermes AgentOps CLI.
 
 Management-plane only: validates governance files, inventory, schemas, and change
 workflow records. It does not apply changes, read secrets, orchestrate business
@@ -15,7 +15,8 @@ import re
 import subprocess
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import Any
 
 try:
     import yaml
@@ -37,7 +38,7 @@ DEFAULT_GLOBAL_FORBIDDEN = {
     "bypass_hermes_runtime_provider",
     "bypass_hermes_tool_registry",
 }
-RISK_APPROVALS = {"low": 1, "medium": 1, "high": 2, "critical": 2}
+DEFAULT_RISK_APPROVALS = {"low": 1, "medium": 1, "high": 2, "critical": 2}
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
 
 
@@ -70,7 +71,12 @@ def validate_with_schema(instance, schema_path: Path, errors: list[str], label: 
     try:
         schema = load_json(schema_path)
         jsonschema.Draft202012Validator.check_schema(schema)
-        jsonschema.validate(instance=instance, schema=schema)
+        validator = jsonschema.Draft202012Validator(
+            schema, format_checker=jsonschema.FormatChecker()
+        )
+        for error in sorted(validator.iter_errors(instance), key=lambda e: list(e.path)):
+            path = ".".join(str(part) for part in error.path) or "<root>"
+            errors.append(f"[CRIT] schema.{label}.{path}: {error.message}")
     except Exception as exc:
         errors.append(f"[CRIT] schema.{label}: {exc}")
 
@@ -82,6 +88,27 @@ def global_forbidden(root: Path) -> set[str]:
     data = load_yaml(path)
     values = (data or {}).get("global_forbidden") or []
     return set(values) | set(DEFAULT_GLOBAL_FORBIDDEN)
+
+
+def risk_approvals(root: Path) -> dict[str, int]:
+    """Load risk approval thresholds from policy.
+
+    DEFAULT_RISK_APPROVALS is a fallback for missing policy files only. In this
+    repository, policies/global-permissions.yaml is the source of truth.
+    """
+    path = root / "policies" / "global-permissions.yaml"
+    if not path.exists():
+        return dict(DEFAULT_RISK_APPROVALS)
+    data = load_yaml(path) or {}
+    defaults = data.get("risk_defaults") or {}
+    result: dict[str, int] = {}
+    for risk, fallback in DEFAULT_RISK_APPROVALS.items():
+        key = f"{risk}_required_approvals"
+        try:
+            result[risk] = max(1, int(defaults.get(key, fallback)))
+        except Exception:
+            result[risk] = fallback
+    return result
 
 
 def validate_profile(root: Path, name: str) -> int:
@@ -228,14 +255,92 @@ def load_change_proposal(root: Path, change_id: str, errors: list[str]):
         return None
 
 
-def diff_paths(diff_text: str) -> set[str]:
+def normalize_repo_path(raw: str, errors: list[str], context: str) -> str | None:
+    if raw == "/dev/null":
+        return None
+    if not raw or raw in {".", "./"}:
+        errors.append(f"[CRIT] diff.path.{context}: empty path")
+        return None
+    if raw.startswith("/") or PurePosixPath(raw).is_absolute():
+        errors.append(f"[CRIT] diff.path.{context}: absolute path rejected: {raw}")
+        return None
+    if "\\" in raw:
+        errors.append(f"[CRIT] diff.path.{context}: backslash path rejected: {raw}")
+        return None
+    if raw.startswith('"') or raw.endswith('"') or any(ch.isspace() for ch in raw):
+        errors.append(f"[CRIT] diff.path.{context}: ambiguous or quoted path rejected: {raw}")
+        return None
+    parts = raw.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        errors.append(f"[CRIT] diff.path.{context}: traversal or empty segment rejected: {raw}")
+        return None
+    normalized = PurePosixPath(raw).as_posix()
+    if normalized != raw:
+        errors.append(f"[CRIT] diff.path.{context}: non-normal path rejected: {raw}")
+        return None
+    return normalized
+
+
+def strip_prefixed_path(token: str, expected_prefixes: tuple[str, ...], errors: list[str], context: str) -> str | None:
+    if token == "/dev/null":
+        return None
+    for prefix in expected_prefixes:
+        if token.startswith(prefix):
+            return normalize_repo_path(token[len(prefix):], errors, context)
+    errors.append(f"[CRIT] diff.header.{context}: expected prefix {expected_prefixes}, got {token}")
+    return None
+
+
+def parse_diff_paths(diff_text: str, errors: list[str]) -> set[str]:
     paths: set[str] = set()
-    for line in diff_text.splitlines():
-        if line.startswith("+++ b/") or line.startswith("--- a/"):
-            path = line[6:]
-            if path != "/dev/null":
+    for number, line in enumerate(diff_text.splitlines(), start=1):
+        if line.startswith("diff --git "):
+            tokens = line.split()
+            if len(tokens) != 4:
+                errors.append(f"[CRIT] diff.header.line{number}: malformed diff --git header")
+                continue
+            for token, prefixes, context in (
+                (tokens[2], ("a/",), f"line{number}.old"),
+                (tokens[3], ("b/",), f"line{number}.new"),
+            ):
+                path = strip_prefixed_path(token, prefixes, errors, context)
+                if path:
+                    paths.add(path)
+        elif line.startswith("--- "):
+            tokens = line.split()
+            if len(tokens) != 2:
+                errors.append(f"[CRIT] diff.header.line{number}: malformed --- header")
+                continue
+            path = strip_prefixed_path(tokens[1], ("a/",), errors, f"line{number}.old")
+            if path:
+                paths.add(path)
+        elif line.startswith("+++ "):
+            tokens = line.split()
+            if len(tokens) != 2:
+                errors.append(f"[CRIT] diff.header.line{number}: malformed +++ header")
+                continue
+            path = strip_prefixed_path(tokens[1], ("b/",), errors, f"line{number}.new")
+            if path:
+                paths.add(path)
+        elif line.startswith("rename from "):
+            raw = line[len("rename from "):]
+            path = normalize_repo_path(raw, errors, f"line{number}.rename_from")
+            if path:
+                paths.add(path)
+        elif line.startswith("rename to "):
+            raw = line[len("rename to "):]
+            path = normalize_repo_path(raw, errors, f"line{number}.rename_to")
+            if path:
                 paths.add(path)
     return paths
+
+
+def validate_diff_path_scope(diff_text: str, agent: str, errors: list[str]) -> None:
+    paths = parse_diff_paths(diff_text, errors)
+    prefix = f"profiles/{agent}/"
+    for path in sorted(paths):
+        if not path.startswith(prefix):
+            errors.append(f"[CRIT] change.path_scope: {path} is outside {prefix}")
 
 
 def git_diff(root: Path, agent: str, staged: bool = False) -> str:
@@ -249,8 +354,8 @@ def git_diff(root: Path, agent: str, staged: bool = False) -> str:
     return proc.stdout
 
 
-def approval_records(root: Path, change_id: str) -> list[dict]:
-    records = []
+def approval_records(root: Path, change_id: str) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
     approvals_dir = change_dir(root, change_id) / "approvals"
     if approvals_dir.exists():
         for path in sorted(approvals_dir.glob("*.yaml")):
@@ -261,11 +366,14 @@ def approval_records(root: Path, change_id: str) -> list[dict]:
     return records
 
 
-def change_status(proposal: dict, approvals: list[dict]) -> str:
+def change_status(root: Path, proposal: dict, approvals: list[dict[str, Any]]) -> str:
     if any(a.get("decision") == "reject" for a in approvals):
         return "rejected"
     approved_by = {a.get("approver") for a in approvals if a.get("decision") == "approve" and a.get("approver")}
-    required = int(proposal.get("required_approvals") or RISK_APPROVALS.get(str(proposal.get("risk_level", "medium")), 1))
+    required = int(
+        proposal.get("required_approvals")
+        or risk_approvals(root).get(str(proposal.get("risk_level", "medium")), 1)
+    )
     if len(approved_by) >= required:
         return "approved"
     if approvals:
@@ -298,12 +406,11 @@ def validate_change(root: Path, change_id: str) -> int:
         if not isinstance(agent, str) or not agent:
             errors.append("[CRIT] change.agent: missing or invalid agent")
         else:
-            for path in sorted(diff_paths(diff_text)):
-                if not path.startswith(f"profiles/{agent}/"):
-                    errors.append(f"[CRIT] change.path_scope: {path} is outside profiles/{agent}/")
+            validate_diff_path_scope(diff_text, agent, errors)
 
-        approvals = []
+        approvals: list[dict[str, Any]] = []
         approvals_dir = cdir / "approvals"
+        seen_approvers: dict[str, str] = {}
         if approvals_dir.exists():
             for approval_file in sorted(approvals_dir.glob("*.yaml")):
                 try:
@@ -316,6 +423,16 @@ def validate_change(root: Path, change_id: str) -> int:
                         errors.append(f"[CRIT] approval.{approval_file.name}: change_id mismatch")
                     if approval.get("diff_sha256") != expected_hash:
                         errors.append(f"[CRIT] approval.{approval_file.name}: diff hash mismatch")
+                    approver = approval.get("approver")
+                    decision = approval.get("decision")
+                    if decision == "approve" and approver:
+                        if approver in seen_approvers:
+                            errors.append(
+                                f"[CRIT] approval.duplicate_approver: {approver} appears in both "
+                                f"{seen_approvers[approver]} and {approval_file.name}"
+                            )
+                        else:
+                            seen_approvers[str(approver)] = approval_file.name
                     approvals.append(approval)
                 except Exception as exc:
                     errors.append(f"[CRIT] approval.{approval_file.name}: {exc}")
@@ -323,10 +440,17 @@ def validate_change(root: Path, change_id: str) -> int:
         if any(a.get("decision") == "reject" for a in approvals):
             errors.append("[CRIT] approval.status: at least one rejection is present")
         approved_by = {a.get("approver") for a in approvals if a.get("decision") == "approve" and a.get("approver")}
-        risk = proposal.get("risk_level", "medium")
-        required = int(proposal.get("required_approvals") or RISK_APPROVALS.get(str(risk), 1))
-        if len(approved_by) < required:
-            errors.append(f"[CRIT] approval.threshold: {len(approved_by)} approvals, require {required}")
+        risk = str(proposal.get("risk_level", "medium"))
+        policy_thresholds = risk_approvals(root)
+        expected_required = policy_thresholds.get(risk, 1)
+        declared_required = int(proposal.get("required_approvals") or expected_required)
+        if declared_required != expected_required:
+            errors.append(
+                f"[CRIT] approval.required_approvals: proposal declares {declared_required}, "
+                f"policy requires {expected_required}"
+            )
+        if len(approved_by) < expected_required:
+            errors.append(f"[CRIT] approval.threshold: {len(approved_by)} approvals, require {expected_required}")
 
     for error in errors:
         print(error)
@@ -349,7 +473,7 @@ def cmd_changes_propose(args) -> int:
     if cdir.exists():
         print(f"[CRIT] change.dir: already exists {cdir}")
         return 2
-    required = RISK_APPROVALS[args.risk_level]
+    required = risk_approvals(root)[args.risk_level]
     proposal = {
         "schema_version": 1,
         "change_id": change_id,
@@ -388,7 +512,7 @@ def cmd_changes_list(args) -> int:
         if args.agent and proposal.get("agent") != args.agent:
             continue
         records = approval_records(root, cdir.name)
-        print(f"{cdir.name}\t{proposal.get('agent')}\t{proposal.get('risk_level')}\t{change_status(proposal, records)}\t{proposal.get('title')}")
+        print(f"{cdir.name}\t{proposal.get('agent')}\t{proposal.get('risk_level')}\t{change_status(root, proposal, records)}\t{proposal.get('title')}")
     return 0
 
 
@@ -402,13 +526,13 @@ def cmd_changes_show(args) -> int:
         return 2
     records = approval_records(root, args.change_id)
     if args.json:
-        print(json.dumps({"proposal": proposal, "status": change_status(proposal, records), "approvals": records}, ensure_ascii=False, indent=2))
+        print(json.dumps({"proposal": proposal, "status": change_status(root, proposal, records), "approvals": records}, ensure_ascii=False, indent=2))
         return 0
     print(f"# {args.change_id}")
     print(f"agent: {proposal.get('agent')}")
     print(f"title: {proposal.get('title')}")
     print(f"risk: {proposal.get('risk_level')}")
-    print(f"status: {change_status(proposal, records)}")
+    print(f"status: {change_status(root, proposal, records)}")
     print(f"diff_sha256: {proposal.get('diff_sha256')}")
     print(f"approvals: {len([r for r in records if r.get('decision') == 'approve'])}/{proposal.get('required_approvals')}")
     return 0
@@ -495,7 +619,7 @@ def main(argv=None) -> int:
     p.add_argument("--title", required=True)
     p.add_argument("--summary", required=True)
     p.add_argument("--reason", required=True)
-    p.add_argument("--risk-level", choices=sorted(RISK_APPROVALS), default="medium")
+    p.add_argument("--risk-level", choices=sorted(DEFAULT_RISK_APPROVALS), default="medium")
     p.add_argument("--created-by", default="user")
     p.add_argument("--rollback-note", default="Rollback with Git-first strategy, then validate.")
     p.add_argument("--validation-note", default="Run changes verify and profile validation before any future apply.")
