@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""Validate the repository CODEOWNERS governance baseline.
+
+This is a repository-level guardrail only. GitHub branch protection or rulesets
+must enforce required reviews and required checks.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+OWNER = "@ray-toaru"
+CODEOWNERS = Path(".github/CODEOWNERS")
+MAX_SIZE_BYTES = 3 * 1024 * 1024
+REQUIRED_ENTRIES = {
+    "*": OWNER,
+    "/.github/": OWNER,
+    "/.github/CODEOWNERS": OWNER,
+    "/scripts/": OWNER,
+    "/schemas/": OWNER,
+    "/policies/": OWNER,
+    "/profiles/": OWNER,
+    "/inventory/": OWNER,
+    "/tests/": OWNER,
+    "/docs/": OWNER,
+}
+UNSUPPORTED_PATTERN_CHARS = {"!", "[", "]"}
+
+
+def parse_codeowners(path: Path) -> tuple[dict[str, list[str]], list[str]]:
+    entries: dict[str, list[str]] = {}
+    errors: list[str] = []
+
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        parts = line.split()
+        if len(parts) < 2:
+            errors.append(f"line {line_number}: missing owner for pattern {parts[0] if parts else '<empty>'}")
+            continue
+
+        pattern, owners = parts[0], parts[1:]
+        if any(char in pattern for char in UNSUPPORTED_PATTERN_CHARS):
+            errors.append(f"line {line_number}: unsupported CODEOWNERS pattern syntax: {pattern}")
+        if not all(owner.startswith("@") for owner in owners):
+            errors.append(f"line {line_number}: owners must use @user or @org/team syntax")
+
+        entries[pattern] = owners
+
+    return entries, errors
+
+
+def main() -> int:
+    errors: list[str] = []
+
+    if not CODEOWNERS.exists():
+        errors.append("missing .github/CODEOWNERS")
+    elif CODEOWNERS.stat().st_size >= MAX_SIZE_BYTES:
+        errors.append(".github/CODEOWNERS must remain under 3 MB")
+
+    if not errors:
+        entries, parse_errors = parse_codeowners(CODEOWNERS)
+        errors.extend(parse_errors)
+        for pattern, owner in REQUIRED_ENTRIES.items():
+            owners = entries.get(pattern)
+            if owners != [owner]:
+                errors.append(f"required CODEOWNERS entry missing or changed: {pattern} {owner}")
+
+    if errors:
+        print("CODEOWNERS baseline check failed:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+
+    print("CODEOWNERS baseline check passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
