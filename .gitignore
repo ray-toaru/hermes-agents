@@ -1,0 +1,30 @@
+# Runtime state
+state.db
+state.db-*
+logs/
+sessions/
+workspaces/
+workspace/
+
+# Secrets
+.env
+.env.*
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+.secrets/
+secrets.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
