@@ -1,0 +1,5 @@
+agents:
+  - name: agentops
+    status: active
+    profile_dir: profiles/agentops
+    manifest: profiles/agentops/manifest.yaml
