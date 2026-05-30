@@ -40,20 +40,22 @@ jobs:
           bad=""
           while IFS= read -r path; do
             case "$path" in
-              ./.git/*) continue ;;
               */.env.template) continue ;;
             esac
             bad="$bad$path\n"
           done < <(find . \
-            -name state.db -o \
-            -name 'state.db-*' -o \
-            -name .env -o \
-            -name '*.pem' -o \
-            -name '*.key' -o \
-            -name secrets.json -o \
-            -path '*/logs/*' -o \
-            -path '*/sessions/*' -o \
-            -path '*/workspaces/*')
+            -path ./.git -prune -o \
+            -type f \
+            \( -name state.db \
+              -o -name 'state.db-*' \
+              -o -name .env \
+              -o -name '*.pem' \
+              -o -name '*.key' \
+              -o -name secrets.json \
+              -o -path '*/logs/*' \
+              -o -path '*/sessions/*' \
+              -o -path '*/workspaces/*' \
+            \) -print)
           if [ -n "$bad" ]; then
             printf 'Forbidden files detected:\n%b' "$bad"
             exit 1
