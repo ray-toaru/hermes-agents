@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/manifest.schema.json",
+  "title": "Hermes AgentOps Profile Manifest",
+  "description": "Governance metadata for a Hermes agent profile. This does not replace Hermes config.yaml, SOUL.md, provider runtime resolution, or tools registry.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "name",
+    "type",
+    "status",
+    "owner",
+    "risk_level",
+    "paths",
+    "runtime",
+    "provider",
+    "secrets",
+    "permissions",
+    "maintenance",
+    "rollback",
+    "audit"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$" },
+    "type": { "type": "string", "const": "hermes-agent-profile" },
+    "status": { "type": "string", "enum": ["draft", "active", "paused", "archived"] },
+    "owner": { "type": "string", "minLength": 1 },
+    "risk_level": { "type": "string", "enum": ["low", "medium", "high", "critical"] }
+  }
+}
