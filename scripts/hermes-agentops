@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Minimal Hermes AgentOps CLI for repository bootstrap.
+"""Minimal Hermes AgentOps CLI.
 
-This bootstrap CLI is intentionally small. It validates governance files and
-inventory only; it does not apply changes, read secrets, or mutate runtime state.
+Management-plane only: validates governance files and inventory. It does not
+apply changes, read secrets, orchestrate business tasks, or mutate runtime state.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -16,16 +17,20 @@ try:
 except Exception:
     yaml = None
 
-REQUIRED_PROFILE_FILES = [
-    "SOUL.md",
-    "config.yaml",
-    "manifest.yaml",
-]
+try:
+    import jsonschema
+except Exception:
+    jsonschema = None
 
-FORBIDDEN_NAMES = {
-    ".env",
-    "state.db",
-    "secrets.json",
+REQUIRED_PROFILE_FILES = ["SOUL.md", "config.yaml", "manifest.yaml"]
+FORBIDDEN_NAMES = {".env", "state.db", "secrets.json"}
+DEFAULT_GLOBAL_FORBIDDEN = {
+    "read_secret_values",
+    "execute_business_actions",
+    "bypass_approval",
+    "delete_runtime_state",
+    "bypass_hermes_runtime_provider",
+    "bypass_hermes_tool_registry",
 }
 
 
@@ -36,14 +41,39 @@ def load_yaml(path: Path):
         return yaml.safe_load(f)
 
 
+def load_json(path: Path):
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def validate_with_schema(instance, schema_path: Path, errors: list[str], label: str) -> None:
+    if not schema_path.exists():
+        errors.append(f"[CRIT] schema.{label}: missing {schema_path}")
+        return
+    if jsonschema is None:
+        return
+    try:
+        jsonschema.Draft202012Validator.check_schema(load_json(schema_path))
+        jsonschema.validate(instance=instance, schema=load_json(schema_path))
+    except Exception as exc:
+        errors.append(f"[CRIT] schema.{label}: {exc}")
+
+
+def global_forbidden(root: Path) -> set[str]:
+    path = root / "policies" / "global-permissions.yaml"
+    if not path.exists():
+        return set(DEFAULT_GLOBAL_FORBIDDEN)
+    data = load_yaml(path)
+    values = (data or {}).get("global_forbidden") or []
+    return set(values) | set(DEFAULT_GLOBAL_FORBIDDEN)
+
+
 def validate_profile(root: Path, name: str) -> int:
     profile_dir = root / "profiles" / name
-    errors = []
+    errors: list[str] = []
 
     if not profile_dir.exists():
-        errors.append(f"[CRIT] profile.exists: missing {profile_dir}")
-        for error in errors:
-            print(error)
+        print(f"[CRIT] profile.exists: missing {profile_dir}")
         return 2
 
     for rel in REQUIRED_PROFILE_FILES:
@@ -69,25 +99,7 @@ def validate_profile(root: Path, name: str) -> int:
             if not isinstance(manifest, dict):
                 errors.append("[CRIT] manifest: must be a mapping")
             else:
-                required = [
-                    "schema_version",
-                    "name",
-                    "type",
-                    "status",
-                    "owner",
-                    "risk_level",
-                    "paths",
-                    "runtime",
-                    "provider",
-                    "secrets",
-                    "permissions",
-                    "maintenance",
-                    "rollback",
-                    "audit",
-                ]
-                for key in required:
-                    if key not in manifest:
-                        errors.append(f"[CRIT] manifest.{key}: missing")
+                validate_with_schema(manifest, root / "schemas" / "manifest.schema.json", errors, "manifest")
                 if manifest.get("name") != name:
                     errors.append(f"[CRIT] manifest.name: expected {name!r}")
                 if manifest.get("type") != "hermes-agent-profile":
@@ -95,9 +107,16 @@ def validate_profile(root: Path, name: str) -> int:
                 secrets = manifest.get("secrets") or {}
                 if secrets.get("readable_by_agentops") is not False:
                     errors.append("[CRIT] secrets.readable_by_agentops: must be false")
-                forbidden = set((manifest.get("permissions") or {}).get("forbidden") or [])
-                if "read_secret_values" not in forbidden:
-                    errors.append("[CRIT] permissions.forbidden: must include read_secret_values")
+                permissions = manifest.get("permissions") or {}
+                allowed = set(permissions.get("allowed") or [])
+                approval = set(permissions.get("requires_approval") or [])
+                forbidden = set(permissions.get("forbidden") or [])
+                missing = global_forbidden(root) - forbidden
+                if missing:
+                    errors.append(f"[CRIT] permissions.forbidden: missing global forbidden {sorted(missing)}")
+                overlap = (allowed | approval) & forbidden
+                if overlap:
+                    errors.append(f"[CRIT] permissions.conflict: allowed/approval overlaps forbidden {sorted(overlap)}")
         except Exception as exc:
             errors.append(f"[CRIT] manifest.parse: {exc}")
 
@@ -128,8 +147,7 @@ def cmd_validate(args) -> int:
             print("[CRIT] inventory: invalid agent entry")
             code = 2
             continue
-        result = validate_profile(root, item["name"])
-        code = max(code, result)
+        code = max(code, validate_profile(root, item["name"]))
     return code
 
 
@@ -142,6 +160,21 @@ def cmd_inventory_list(args) -> int:
     return 0
 
 
+def cmd_validate_schemas(args) -> int:
+    root = Path(args.root).resolve()
+    errors: list[str] = []
+    for path in sorted((root / "schemas").glob("*.schema.json")):
+        try:
+            schema = load_json(path)
+            if jsonschema is not None:
+                jsonschema.Draft202012Validator.check_schema(schema)
+        except Exception as exc:
+            errors.append(f"[CRIT] schema.{path.name}: {exc}")
+    for error in errors:
+        print(error)
+    return 2 if errors else 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="hermes-agentops")
     parser.add_argument("--root", default=".")
@@ -151,6 +184,9 @@ def main(argv=None) -> int:
     p.add_argument("agent", nargs="?")
     p.add_argument("-v", "--verbose", action="store_true")
     p.set_defaults(func=cmd_validate)
+
+    p = sub.add_parser("validate-schemas")
+    p.set_defaults(func=cmd_validate_schemas)
 
     inv = sub.add_parser("inventory")
     inv_sub = inv.add_subparsers(dest="inventory_cmd", required=True)

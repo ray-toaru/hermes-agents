@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/approval-record.schema.json",
+  "title": "Hermes AgentOps Approval Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "change_id", "decision", "approver", "created_at", "comment", "diff_sha256", "acknowledgements"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "change_id": {"type": "string", "minLength": 1},
+    "decision": {"type": "string", "enum": ["approve", "reject"]},
+    "approver": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string"},
+    "comment": {"type": "string"},
+    "diff_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "acknowledgements": {"type": "object", "additionalProperties": false, "required": ["reviewed_diff", "understands_apply_not_automatic", "secret_values_not_reviewed", "business_orchestration_not_authorized"], "properties": {"reviewed_diff": {"type": "boolean", "const": true}, "understands_apply_not_automatic": {"type": "boolean", "const": true}, "secret_values_not_reviewed": {"type": "boolean", "const": true}, "business_orchestration_not_authorized": {"type": "boolean", "const": true}}}
+  }
+}
