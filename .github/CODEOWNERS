@@ -1,0 +1,14 @@
+# Repository governance ownership.
+# CODEOWNERS is advisory until branch protection or rulesets require owner review.
+
+* @ray-toaru
+
+/.github/ @ray-toaru
+/.github/CODEOWNERS @ray-toaru
+/scripts/ @ray-toaru
+/schemas/ @ray-toaru
+/policies/ @ray-toaru
+/profiles/ @ray-toaru
+/inventory/ @ray-toaru
+/tests/ @ray-toaru
+/docs/ @ray-toaru
