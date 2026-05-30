@@ -1,0 +1,16 @@
+# Hermes config.yaml template for AgentOps.
+# Do not place real secrets here.
+# Provider/model values must follow your installed Hermes version and official provider runtime resolution.
+
+agent:
+  system_prompt: ""
+
+model:
+  provider: ""
+  model: ""
+
+tools:
+  enabled_toolsets: []
+
+secrets:
+  required: []
