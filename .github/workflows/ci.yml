@@ -1,0 +1,61 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml jsonschema pytest ruff
+
+      - name: Compile CLI if present
+        run: |
+          if [ -f scripts/hermes-agentops ]; then
+            python -m py_compile scripts/hermes-agentops
+          fi
+
+      - name: Validate profiles if CLI is present
+        run: |
+          if [ -f scripts/hermes-agentops ]; then
+            python scripts/hermes-agentops validate -v
+          fi
+
+      - name: Secret and runtime file guard
+        run: |
+          set -euo pipefail
+          bad=""
+          while IFS= read -r path; do
+            case "$path" in
+              ./.git/*) continue ;;
+              */.env.template) continue ;;
+              *.md) ;;
+            esac
+            bad="$bad$path\n"
+          done < <(find . \
+            -name state.db -o \
+            -name 'state.db-*' -o \
+            -name .env -o \
+            -name '*.pem' -o \
+            -name '*.key' -o \
+            -name secrets.json -o \
+            -path '*/logs/*' -o \
+            -path '*/sessions/*' -o \
+            -path '*/workspaces/*')
+          if [ -n "$bad" ]; then
+            printf 'Forbidden files detected:\n%b' "$bad"
+            exit 1
+          fi

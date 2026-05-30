@@ -1,0 +1,97 @@
+schema_version: 1
+name: agentops
+type: hermes-agent-profile
+status: active
+owner: user
+risk_level: high
+
+description: >
+  Hermes AgentOps Manager profile. It manages Hermes agent profiles, but it does
+  not schedule agents or orchestrate business workflows.
+
+paths:
+  profile_dir: profiles/agentops
+  workspace_dir: /srv/hermes/workspaces/agentops
+  runtime_home: /srv/hermes/homes/agentops
+  log_dir: /srv/hermes/logs/agentops
+
+runtime:
+  hermes_profile: agentops
+  container:
+    enabled: false
+    engine: none
+  gateway:
+    enabled: false
+  cron:
+    enabled: false
+
+provider:
+  managed_by: hermes_config
+  config_file: config.yaml
+  allow_agentops_to_modify: false
+
+secrets:
+  mode: reference_only
+  required: []
+  readable_by_agentops: false
+  writable_by_agentops: false
+
+permissions:
+  allowed:
+    - read_profile
+    - read_logs
+    - run_health_check
+    - generate_diff
+    - generate_docs
+    - validate_yaml
+  requires_approval:
+    - modify_soul
+    - modify_config
+    - install_skill
+    - remove_skill
+    - restart_container
+    - push_to_git
+    - update_gateway
+    - update_cron
+  forbidden:
+    - read_secret_values
+    - execute_business_actions
+    - delete_profile_without_double_confirm
+    - modify_wallet_keys
+    - bypass_hermes_runtime_provider
+    - bypass_hermes_tool_registry
+    - delete_runtime_state
+    - bypass_approval
+
+maintenance:
+  health_checks:
+    - profile_files_present
+    - yaml_valid
+    - soul_present
+    - config_valid
+    - required_secret_names_present
+    - git_drift_check
+  auto_fix_allowed:
+    - format_yaml
+    - generate_missing_readme
+    - generate_missing_runbook
+    - generate_missing_env_template
+    - fill_manifest_optional_fields
+  auto_fix_forbidden:
+    - change_soul_identity
+    - change_model_provider
+    - install_or_remove_skills
+    - restart_container
+    - modify_secret_refs
+    - delete_files
+
+rollback:
+  strategy: git_first
+  require_pre_change_snapshot: true
+  require_validation_after_rollback: true
+
+audit:
+  changelog: CHANGELOG.md
+  require_diff: true
+  require_reason: true
+  require_risk_note: true

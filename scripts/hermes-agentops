@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""Minimal Hermes AgentOps CLI for repository bootstrap.
+
+This bootstrap CLI is intentionally small. It validates governance files and
+inventory only; it does not apply changes, read secrets, or mutate runtime state.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+try:
+    import yaml
+except Exception:
+    yaml = None
+
+REQUIRED_PROFILE_FILES = [
+    "SOUL.md",
+    "config.yaml",
+    "manifest.yaml",
+]
+
+FORBIDDEN_NAMES = {
+    ".env",
+    "state.db",
+    "secrets.json",
+}
+
+
+def load_yaml(path: Path):
+    if yaml is None:
+        raise RuntimeError("PyYAML is required: python -m pip install pyyaml")
+    with path.open("r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def validate_profile(root: Path, name: str) -> int:
+    profile_dir = root / "profiles" / name
+    errors = []
+
+    if not profile_dir.exists():
+        errors.append(f"[CRIT] profile.exists: missing {profile_dir}")
+        for error in errors:
+            print(error)
+        return 2
+
+    for rel in REQUIRED_PROFILE_FILES:
+        path = profile_dir / rel
+        if not path.exists():
+            errors.append(f"[CRIT] file.{rel}: missing")
+        elif path.stat().st_size == 0:
+            errors.append(f"[CRIT] file.{rel}: empty")
+
+    for path in profile_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.name in FORBIDDEN_NAMES:
+            errors.append(f"[CRIT] forbidden_file: {path.relative_to(root)}")
+        parts = set(path.relative_to(profile_dir).parts)
+        if parts & {"logs", "sessions", "workspace", "workspaces"}:
+            errors.append(f"[CRIT] runtime_file: {path.relative_to(root)}")
+
+    manifest_path = profile_dir / "manifest.yaml"
+    if manifest_path.exists():
+        try:
+            manifest = load_yaml(manifest_path)
+            if not isinstance(manifest, dict):
+                errors.append("[CRIT] manifest: must be a mapping")
+            else:
+                required = [
+                    "schema_version",
+                    "name",
+                    "type",
+                    "status",
+                    "owner",
+                    "risk_level",
+                    "paths",
+                    "runtime",
+                    "provider",
+                    "secrets",
+                    "permissions",
+                    "maintenance",
+                    "rollback",
+                    "audit",
+                ]
+                for key in required:
+                    if key not in manifest:
+                        errors.append(f"[CRIT] manifest.{key}: missing")
+                if manifest.get("name") != name:
+                    errors.append(f"[CRIT] manifest.name: expected {name!r}")
+                if manifest.get("type") != "hermes-agent-profile":
+                    errors.append("[CRIT] manifest.type: must be hermes-agent-profile")
+                secrets = manifest.get("secrets") or {}
+                if secrets.get("readable_by_agentops") is not False:
+                    errors.append("[CRIT] secrets.readable_by_agentops: must be false")
+                forbidden = set((manifest.get("permissions") or {}).get("forbidden") or [])
+                if "read_secret_values" not in forbidden:
+                    errors.append("[CRIT] permissions.forbidden: must include read_secret_values")
+        except Exception as exc:
+            errors.append(f"[CRIT] manifest.parse: {exc}")
+
+    for error in errors:
+        print(error)
+    return 2 if errors else 0
+
+
+def load_inventory(root: Path):
+    path = root / "inventory" / "agents.yaml"
+    if not path.exists():
+        return {"agents": []}
+    data = load_yaml(path)
+    if not isinstance(data, dict):
+        raise RuntimeError("inventory/agents.yaml must be a mapping")
+    data.setdefault("agents", [])
+    return data
+
+
+def cmd_validate(args) -> int:
+    root = Path(args.root).resolve()
+    if args.agent:
+        return validate_profile(root, args.agent)
+    inventory = load_inventory(root)
+    code = 0
+    for item in inventory.get("agents", []):
+        if not isinstance(item, dict) or not item.get("name"):
+            print("[CRIT] inventory: invalid agent entry")
+            code = 2
+            continue
+        result = validate_profile(root, item["name"])
+        code = max(code, result)
+    return code
+
+
+def cmd_inventory_list(args) -> int:
+    root = Path(args.root).resolve()
+    inventory = load_inventory(root)
+    for item in inventory.get("agents", []):
+        if isinstance(item, dict):
+            print(f"{item.get('name')}\t{item.get('status')}\t{item.get('profile_dir')}")
+    return 0
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="hermes-agentops")
+    parser.add_argument("--root", default=".")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("validate")
+    p.add_argument("agent", nargs="?")
+    p.add_argument("-v", "--verbose", action="store_true")
+    p.set_defaults(func=cmd_validate)
+
+    inv = sub.add_parser("inventory")
+    inv_sub = inv.add_subparsers(dest="inventory_cmd", required=True)
+    p = inv_sub.add_parser("list")
+    p.set_defaults(func=cmd_inventory_list)
+
+    args = parser.parse_args(argv)
+    try:
+        return int(args.func(args))
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
