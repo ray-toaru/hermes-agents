@@ -40,6 +40,9 @@ DEFAULT_GLOBAL_FORBIDDEN = {
 }
 DEFAULT_RISK_APPROVALS = {"low": 1, "medium": 1, "high": 2, "critical": 2}
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
+RFC3339_DATE_TIME_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
 
 
 def load_yaml(path: Path):
@@ -62,6 +65,37 @@ def load_json(path: Path):
         return json.load(f)
 
 
+def is_rfc3339_date_time(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    if not RFC3339_DATE_TIME_RE.match(value):
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+def build_format_checker():
+    if jsonschema is None:
+        return None
+    checker = jsonschema.FormatChecker()
+
+    @checker.checks("date-time")
+    def check_date_time(value: Any) -> bool:
+        if not isinstance(value, str):
+            return True
+        return is_rfc3339_date_time(value)
+
+    return checker
+
+
+def validate_required_date_time(value: Any, errors: list[str], label: str) -> None:
+    if not is_rfc3339_date_time(value):
+        errors.append(f"[CRIT] {label}: must be RFC3339 date-time, got {value!r}")
+
+
 def validate_with_schema(instance, schema_path: Path, errors: list[str], label: str) -> None:
     if not schema_path.exists():
         errors.append(f"[CRIT] schema.{label}: missing {schema_path}")
@@ -72,7 +106,8 @@ def validate_with_schema(instance, schema_path: Path, errors: list[str], label: 
         schema = load_json(schema_path)
         jsonschema.Draft202012Validator.check_schema(schema)
         validator = jsonschema.Draft202012Validator(
-            schema, format_checker=jsonschema.FormatChecker()
+            schema,
+            format_checker=build_format_checker(),
         )
         for error in sorted(validator.iter_errors(instance), key=lambda e: list(e.path)):
             path = ".".join(str(part) for part in error.path) or "<root>"
@@ -249,6 +284,7 @@ def load_change_proposal(root: Path, change_id: str, errors: list[str]):
             errors.append("[CRIT] change.proposal: must be a mapping")
             return None
         validate_with_schema(data, root / "schemas" / "change-proposal.schema.json", errors, "change-proposal")
+        validate_required_date_time(data.get("created_at"), errors, "change.proposal.created_at")
         return data
     except Exception as exc:
         errors.append(f"[CRIT] change.proposal.parse: {exc}")
@@ -419,6 +455,7 @@ def validate_change(root: Path, change_id: str) -> int:
                         errors.append(f"[CRIT] approval.{approval_file.name}: must be a mapping")
                         continue
                     validate_with_schema(approval, root / "schemas" / "approval-record.schema.json", errors, f"approval-record.{approval_file.name}")
+                    validate_required_date_time(approval.get("created_at"), errors, f"approval.{approval_file.name}.created_at")
                     if approval.get("change_id") != change_id:
                         errors.append(f"[CRIT] approval.{approval_file.name}: change_id mismatch")
                     if approval.get("diff_sha256") != expected_hash:
