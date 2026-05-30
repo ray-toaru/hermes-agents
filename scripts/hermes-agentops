@@ -256,23 +256,27 @@ def patch_check(root: Path, text: str, err: list[str]) -> None:
     r=subprocess.run(["git","apply","--check"],cwd=root,input=text,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=False)
     if r.returncode: err.append(f"[CRIT] git.apply_check: {r.stderr.strip() or 'patch does not apply'}")
 
-def approvals(root: Path, cid: str) -> list[dict[str,Any]]:
-    out=[]; d=change_dir(root,cid)/"approvals"
-    if d.exists():
-        for p in sorted(d.glob("*.yaml")):
-            x=yload(p)
-            if isinstance(x, dict): x["_file"]=p.name; out.append(x)
-    return out
+def load_approval_file(root: Path, cid: str, expected_hash: str|None, seen: dict[str,str], ap: Path, err: list[str]) -> dict[str,Any]|None:
+    try:
+        a=yload(ap)
+        if not isinstance(a, dict): err.append(f"[CRIT] approval.{ap.name}: must be a mapping"); return None
+        err += schema_errors(a, root/"schemas"/"approval-record.schema.json", f"approval-record.{ap.name}")
+        if not is_dt(a.get("created_at")): err.append(f"[CRIT] approval.{ap.name}.created_at: must be RFC3339 date-time, got {a.get('created_at')!r}")
+        if a.get("change_id") != cid: err.append(f"[CRIT] approval.{ap.name}: change_id mismatch")
+        if a.get("diff_sha256") != expected_hash: err.append(f"[CRIT] approval.{ap.name}: diff hash mismatch")
+        who=a.get("approver"); dec=a.get("decision")
+        if dec=="approve" and who:
+            if who in seen: err.append(f"[CRIT] approval.duplicate_approver: {who} appears in both {seen[who]} and {ap.name}")
+            else: seen[str(who)]=ap.name
+        a["_file"]=ap.name
+        return a
+    except Exception as e:
+        err.append(f"[CRIT] approval.{ap.name}: {e}")
+        return None
 
-def change_status(root: Path, prop: dict, apps: list[dict[str,Any]]) -> str:
-    if any(a.get("decision")=="reject" for a in apps): return "rejected"
-    approved={a.get("approver") for a in apps if a.get("decision")=="approve" and a.get("approver")}
-    req=int(prop.get("required_approvals") or risk_approvals(root).get(str(prop.get("risk_level","medium")),1))
-    return "approved" if len(approved)>=req else ("partially_approved" if apps else "proposed")
-
-def validate_change(root: Path, cid: str, check_git_clean=False, check_patch_applicable=False) -> int:
-    err=[]; d=change_dir(root,cid)
-    if not d.exists(): print(f"[CRIT] change.dir: missing {d}"); return 2
+def collect_change(root: Path, cid: str, *, enforce_threshold: bool, check_git_clean=False, check_patch_applicable=False) -> tuple[list[str], dict[str,Any]|None, list[dict[str,Any]]]:
+    err=validate_policy(root); apps=[]; d=change_dir(root,cid)
+    if not d.exists(): return [*err, f"[CRIT] change.dir: missing {d}"], None, []
     prop=load_change(root,cid,err); fp=d/"diff.patch"; text=fp.read_text(encoding="utf-8") if fp.exists() else ""
     if not fp.exists(): err.append(f"[CRIT] change.diff: missing {fp}")
     if prop:
@@ -284,32 +288,41 @@ def validate_change(root: Path, cid: str, check_git_clean=False, check_patch_app
             validate_scope(text, agent, err)
             if check_git_clean: git_clean(root, agent, err)
             if check_patch_applicable and text: patch_check(root, text, err)
-        apps=[]; seen={}; ad=d/"approvals"
+        seen={}; ad=d/"approvals"
         if ad.exists():
             for ap in sorted(ad.glob("*.yaml")):
-                try:
-                    a=yload(ap)
-                    if not isinstance(a, dict): err.append(f"[CRIT] approval.{ap.name}: must be a mapping"); continue
-                    err += schema_errors(a, root/"schemas"/"approval-record.schema.json", f"approval-record.{ap.name}")
-                    if not is_dt(a.get("created_at")): err.append(f"[CRIT] approval.{ap.name}.created_at: must be RFC3339 date-time, got {a.get('created_at')!r}")
-                    if a.get("change_id") != cid: err.append(f"[CRIT] approval.{ap.name}: change_id mismatch")
-                    if a.get("diff_sha256") != exp: err.append(f"[CRIT] approval.{ap.name}: diff hash mismatch")
-                    who=a.get("approver"); dec=a.get("decision")
-                    if dec=="approve" and who:
-                        if who in seen: err.append(f"[CRIT] approval.duplicate_approver: {who} appears in both {seen[who]} and {ap.name}")
-                        else: seen[str(who)]=ap.name
-                    apps.append(a)
-                except Exception as e: err.append(f"[CRIT] approval.{ap.name}: {e}")
+                rec=load_approval_file(root, cid, exp, seen, ap, err)
+                if rec is not None: apps.append(rec)
         if any(a.get("decision")=="reject" for a in apps): err.append("[CRIT] approval.status: at least one rejection is present")
-        approved={a.get("approver") for a in apps if a.get("decision")=="approve" and a.get("approver")}
-        risk=str(prop.get("risk_level","medium")); need=risk_approvals(root).get(risk,1); declared=int(prop.get("required_approvals") or need)
-        if declared != need: err.append(f"[CRIT] approval.required_approvals: proposal declares {declared}, policy requires {need}")
-        if len(approved) < need: err.append(f"[CRIT] approval.threshold: {len(approved)} approvals, require {need}")
+        if enforce_threshold:
+            approved={a.get("approver") for a in apps if a.get("decision")=="approve" and a.get("approver")}
+            risk=str(prop.get("risk_level","medium")); need=risk_approvals(root).get(risk,1); declared=int(prop.get("required_approvals") or need)
+            if declared != need: err.append(f"[CRIT] approval.required_approvals: proposal declares {declared}, policy requires {need}")
+            if len(approved) < need: err.append(f"[CRIT] approval.threshold: {len(approved)} approvals, require {need}")
+    return err, prop, apps
+
+def change_status(root: Path, prop: dict, apps: list[dict[str,Any]]) -> str:
+    if any(a.get("decision")=="reject" for a in apps): return "rejected"
+    approved={a.get("approver") for a in apps if a.get("decision")=="approve" and a.get("approver")}
+    req=int(prop.get("required_approvals") or risk_approvals(root).get(str(prop.get("risk_level","medium")),1))
+    return "approved" if len(approved)>=req else ("partially_approved" if apps else "proposed")
+
+def trusted_status(root: Path, cid: str) -> tuple[str, dict[str,Any]|None, list[dict[str,Any]], list[str]]:
+    err, prop, apps = collect_change(root, cid, enforce_threshold=False)
+    if err or prop is None: return "invalid", prop, apps, err
+    return change_status(root, prop, apps), prop, apps, err
+
+def validate_change(root: Path, cid: str, check_git_clean=False, check_patch_applicable=False) -> int:
+    err, _prop, _apps = collect_change(root, cid, enforce_threshold=True, check_git_clean=check_git_clean, check_patch_applicable=check_patch_applicable)
     for e in err: print(e)
     return 2 if err else 0
 
 def cmd_changes_propose(a) -> int:
     root=Path(a.root).resolve(); agent=a.agent
+    policy_err = validate_policy(root)
+    if policy_err:
+        for e in policy_err: print(e)
+        return 2
     if not NAME_RE.match(agent): print(f"[CRIT] change.agent: invalid agent name {agent!r}"); return 2
     text=git_diff(root,agent,staged=a.staged)
     if not text.strip() and not a.allow_empty: print("[CRIT] change.diff: no Git diff found for profile"); return 2
@@ -323,18 +336,21 @@ def cmd_changes_list(a) -> int:
     if not cr.exists(): return 0
     for d in sorted(cr.iterdir()):
         if d.is_dir() and (d/"proposal.yaml").exists():
-            p=yload(d/"proposal.yaml")
-            if isinstance(p,dict) and (not a.agent or p.get("agent")==a.agent): print(f"{d.name}\t{p.get('agent')}\t{p.get('risk_level')}\t{change_status(root,p,approvals(root,d.name))}\t{p.get('title')}")
+            status, prop, _apps, _err = trusted_status(root, d.name)
+            if prop and (not a.agent or prop.get("agent")==a.agent): print(f"{d.name}\t{prop.get('agent')}\t{prop.get('risk_level')}\t{status}\t{prop.get('title')}")
     return 0
 
 def cmd_changes_show(a) -> int:
-    root=Path(a.root).resolve(); err=[]; p=load_change(root,a.change_id,err)
-    if err or not p:
+    root=Path(a.root).resolve(); status, prop, apps, err = trusted_status(root, a.change_id)
+    if prop is None:
         for e in err: print(e)
         return 2
-    apps=approvals(root,a.change_id)
-    if a.json: print(json.dumps({"proposal":p,"status":change_status(root,p,apps),"approvals":apps},ensure_ascii=False,indent=2)); return 0
-    print(f"# {a.change_id}\nagent: {p.get('agent')}\ntitle: {p.get('title')}\nrisk: {p.get('risk_level')}\nstatus: {change_status(root,p,apps)}\ndiff_sha256: {p.get('diff_sha256')}\napprovals: {len([x for x in apps if x.get('decision')=='approve'])}/{p.get('required_approvals')}"); return 0
+    if a.json: print(json.dumps({"proposal":prop,"status":status,"approvals":apps,"errors":err},ensure_ascii=False,indent=2)); return 0
+    print(f"# {a.change_id}\nagent: {prop.get('agent')}\ntitle: {prop.get('title')}\nrisk: {prop.get('risk_level')}\nstatus: {status}\ndiff_sha256: {prop.get('diff_sha256')}\napprovals: {len([x for x in apps if x.get('decision')=='approve'])}/{prop.get('required_approvals')}")
+    if err:
+        print("errors:")
+        for e in err: print(f"  - {e}")
+    return 0
 
 def cmd_changes_diff(a) -> int:
     p=change_dir(Path(a.root).resolve(),a.change_id)/"diff.patch"
@@ -342,14 +358,17 @@ def cmd_changes_diff(a) -> int:
     print(p.read_text(encoding="utf-8"),end=""); return 0
 
 def cmd_changes_approve(a) -> int:
-    root=Path(a.root).resolve(); err=[]; p=load_change(root,a.change_id,err)
-    if err or not p:
+    root=Path(a.root).resolve(); err, prop, _apps = collect_change(root, a.change_id, enforce_threshold=False)
+    if err or not prop:
         for e in err: print(e)
         return 2
-    df=change_dir(root,a.change_id)/"diff.patch"
-    if not df.exists(): print(f"[CRIT] change.diff: missing {df}"); return 2
-    if sha256_text(df.read_text(encoding="utf-8")) != p.get("diff_sha256"): print("[CRIT] change.diff_sha256: proposal hash does not match diff.patch"); return 2
-    rec={"schema_version":1,"change_id":a.change_id,"decision":a.decision,"approver":a.approver,"created_at":utc_now_iso(),"comment":a.comment,"diff_sha256":p.get("diff_sha256"),"acknowledgements":{"reviewed_diff":True,"understands_apply_not_automatic":True,"secret_values_not_reviewed":True,"business_orchestration_not_authorized":True}}
+    if not NAME_RE.match(a.approver): print(f"[CRIT] approval.approver: invalid approver {a.approver!r}"); return 2
+    rec={"schema_version":1,"change_id":a.change_id,"decision":a.decision,"approver":a.approver,"created_at":utc_now_iso(),"comment":a.comment,"diff_sha256":prop.get("diff_sha256"),"acknowledgements":{"reviewed_diff":True,"understands_apply_not_automatic":True,"secret_values_not_reviewed":True,"business_orchestration_not_authorized":True}}
+    rec_err=schema_errors(rec, root/"schemas"/"approval-record.schema.json", "approval-record.generated")
+    if not is_dt(rec.get("created_at")): rec_err.append("[CRIT] approval.generated.created_at: must be RFC3339 date-time")
+    if rec_err:
+        for e in rec_err: print(e)
+        return 2
     out=change_dir(root,a.change_id)/"approvals"/f"{utc_now_compact()}_{slug(a.approver)}_{a.decision}.yaml"; ywrite(out,rec); print(out.relative_to(root)); return 0
 
 def cmd_changes_verify(a) -> int: return validate_change(Path(a.root).resolve(), a.change_id, check_git_clean=a.check_git_clean, check_patch_applicable=a.check_patch_applicable)

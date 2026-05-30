@@ -269,6 +269,18 @@ def test_policy_check_rejects_missing_forbidden_default(tmp_path: Path) -> None:
     assert "policy.global_forbidden" in result.stdout
 
 
+def test_verify_rejects_invalid_policy(tmp_path: Path) -> None:
+    root = prepare_root(tmp_path)
+    policy = root / "policies" / "global-permissions.yaml"
+    data = yaml.safe_load(policy.read_text(encoding="utf-8"))
+    data["risk_defaults"]["low_required_approvals"] = 0
+    policy.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    change_id = write_change(root)
+    result = run_verify(root, change_id)
+    assert result.returncode == 2
+    assert "policy.risk_defaults.low_required_approvals" in result.stdout
+
+
 def test_policy_explain_marks_critical_path(tmp_path: Path) -> None:
     root = prepare_root(tmp_path)
     result = run_agentops(root, "policy", "explain", "profiles/agentops/SOUL.md")
@@ -301,3 +313,48 @@ def test_patch_applicability_gate_rejects_non_applicable_patch(tmp_path: Path) -
     result = run_verify(root, change_id, "--check-patch-applicable")
     assert result.returncode == 2
     assert "git.apply_check" in result.stdout
+
+
+def test_list_marks_invalid_approval_status_invalid(tmp_path: Path) -> None:
+    root = prepare_root(tmp_path)
+    change_id = write_change(root)
+    approval = root / "changes" / change_id / "approvals" / "01_reviewer-1_approve.yaml"
+    data = yaml.safe_load(approval.read_text(encoding="utf-8"))
+    data["diff_sha256"] = "0" * 64
+    approval.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    result = run_agentops(root, "changes", "list")
+    assert result.returncode == 0
+    assert "\tinvalid\t" in result.stdout
+    assert "approved" not in result.stdout
+
+
+def test_show_marks_invalid_approval_status_invalid(tmp_path: Path) -> None:
+    root = prepare_root(tmp_path)
+    change_id = write_change(root)
+    approval = root / "changes" / change_id / "approvals" / "01_reviewer-1_approve.yaml"
+    data = yaml.safe_load(approval.read_text(encoding="utf-8"))
+    data["change_id"] = "wrong"
+    approval.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    result = run_agentops(root, "changes", "show", change_id)
+    assert result.returncode == 0
+    assert "status: invalid" in result.stdout
+    assert "change_id mismatch" in result.stdout
+
+
+def test_approve_rejects_invalid_approver(tmp_path: Path) -> None:
+    root = prepare_root(tmp_path)
+    change_id = write_change(root, approvals=[])
+    result = run_agentops(root, "changes", "approve", change_id, "--approver", "bad approver")
+    assert result.returncode == 2
+    assert "approval.approver" in result.stdout
+
+
+def test_approve_writes_schema_valid_record(tmp_path: Path) -> None:
+    root = prepare_root(tmp_path)
+    change_id = write_change(root, approvals=[])
+    result = run_agentops(root, "changes", "approve", change_id, "--approver", "reviewer-1")
+    assert result.returncode == 0, result.stdout + result.stderr
+    records = list((root / "changes" / change_id / "approvals").glob("*.yaml"))
+    assert len(records) == 1
+    verify = run_verify(root, change_id)
+    assert verify.returncode == 0, verify.stdout
