@@ -1,11 +1,11 @@
 schema_version: 1
-plan_id: 20260530T000000Z_agentops_aaaaaaaaaa_preapply
-change_id: 20260530T000000Z_agentops_aaaaaaaaaa
+plan_id: "20260530T000000Z_agentops_aaaaaaaaaa_preapply"
+change_id: "20260530T000000Z_agentops_aaaaaaaaaa"
 agent: agentops
 generated_at: "2026-05-30T00:00:00Z"
 mutation_enabled: false
-base_commit: 0000000000000000000000000000000000000000
-proposal_diff_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+base_commit: "0000000000000000000000000000000000000000"
+proposal_diff_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 gates:
   policy_valid: true
   proposal_valid: true
