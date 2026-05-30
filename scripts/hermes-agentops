@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Minimal Hermes AgentOps CLI.
 
-Management-plane only: validates governance files and inventory. It does not
-apply changes, read secrets, orchestrate business tasks, or mutate runtime state.
+Management-plane only: validates governance files, inventory, schemas, and change
+preflight records. It does not apply changes, read secrets, orchestrate business
+tasks, or mutate runtime state.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -32,6 +35,7 @@ DEFAULT_GLOBAL_FORBIDDEN = {
     "bypass_hermes_runtime_provider",
     "bypass_hermes_tool_registry",
 }
+RISK_APPROVALS = {"low": 1, "medium": 1, "high": 2, "critical": 2}
 
 
 def load_yaml(path: Path):
@@ -53,8 +57,9 @@ def validate_with_schema(instance, schema_path: Path, errors: list[str], label: 
     if jsonschema is None:
         return
     try:
-        jsonschema.Draft202012Validator.check_schema(load_json(schema_path))
-        jsonschema.validate(instance=instance, schema=load_json(schema_path))
+        schema = load_json(schema_path)
+        jsonschema.Draft202012Validator.check_schema(schema)
+        jsonschema.validate(instance=instance, schema=schema)
     except Exception as exc:
         errors.append(f"[CRIT] schema.{label}: {exc}")
 
@@ -175,6 +180,111 @@ def cmd_validate_schemas(args) -> int:
     return 2 if errors else 0
 
 
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def change_dir(root: Path, change_id: str) -> Path:
+    return root / "changes" / change_id
+
+
+def load_change_proposal(root: Path, change_id: str, errors: list[str]):
+    path = change_dir(root, change_id) / "proposal.yaml"
+    if not path.exists():
+        errors.append(f"[CRIT] change.proposal: missing {path}")
+        return None
+    try:
+        data = load_yaml(path)
+        if not isinstance(data, dict):
+            errors.append("[CRIT] change.proposal: must be a mapping")
+            return None
+        validate_with_schema(data, root / "schemas" / "change-proposal.schema.json", errors, "change-proposal")
+        return data
+    except Exception as exc:
+        errors.append(f"[CRIT] change.proposal.parse: {exc}")
+        return None
+
+
+def diff_paths(diff_text: str) -> set[str]:
+    paths: set[str] = set()
+    for line in diff_text.splitlines():
+        if line.startswith("+++ b/") or line.startswith("--- a/"):
+            path = line[6:]
+            if path != "/dev/null":
+                paths.add(path)
+    return paths
+
+
+def validate_change(root: Path, change_id: str) -> int:
+    errors: list[str] = []
+    cdir = change_dir(root, change_id)
+    if not cdir.exists():
+        print(f"[CRIT] change.dir: missing {cdir}")
+        return 2
+
+    proposal = load_change_proposal(root, change_id, errors)
+    diff_file = cdir / "diff.patch"
+    if not diff_file.exists():
+        errors.append(f"[CRIT] change.diff: missing {diff_file}")
+        diff_text = ""
+    else:
+        diff_text = diff_file.read_text(encoding="utf-8")
+
+    if proposal:
+        expected_hash = proposal.get("diff_sha256")
+        actual_hash = sha256_text(diff_text)
+        if expected_hash != actual_hash:
+            errors.append("[CRIT] change.diff_sha256: proposal hash does not match diff.patch")
+
+        agent = proposal.get("agent")
+        if not isinstance(agent, str) or not agent:
+            errors.append("[CRIT] change.agent: missing or invalid agent")
+        else:
+            for path in sorted(diff_paths(diff_text)):
+                if not path.startswith(f"profiles/{agent}/"):
+                    errors.append(f"[CRIT] change.path_scope: {path} is outside profiles/{agent}/")
+
+        approvals_dir = cdir / "approvals"
+        approvals = []
+        if approvals_dir.exists():
+            for approval_file in sorted(approvals_dir.glob("*.yaml")):
+                try:
+                    approval = load_yaml(approval_file)
+                    if not isinstance(approval, dict):
+                        errors.append(f"[CRIT] approval.{approval_file.name}: must be a mapping")
+                        continue
+                    validate_with_schema(approval, root / "schemas" / "approval-record.schema.json", errors, f"approval-record.{approval_file.name}")
+                    if approval.get("change_id") != change_id:
+                        errors.append(f"[CRIT] approval.{approval_file.name}: change_id mismatch")
+                    if approval.get("diff_sha256") != expected_hash:
+                        errors.append(f"[CRIT] approval.{approval_file.name}: diff hash mismatch")
+                    approvals.append(approval)
+                except Exception as exc:
+                    errors.append(f"[CRIT] approval.{approval_file.name}: {exc}")
+
+        if any(a.get("decision") == "reject" for a in approvals):
+            errors.append("[CRIT] approval.status: at least one rejection is present")
+        approved_by = {a.get("approver") for a in approvals if a.get("decision") == "approve" and a.get("approver")}
+        risk = proposal.get("risk_level", "medium")
+        required = int(proposal.get("required_approvals") or RISK_APPROVALS.get(str(risk), 1))
+        if len(approved_by) < required:
+            errors.append(f"[CRIT] approval.threshold: {len(approved_by)} approvals, require {required}")
+
+    for error in errors:
+        print(error)
+    return 2 if errors else 0
+
+
+def cmd_changes_verify(args) -> int:
+    root = Path(args.root).resolve()
+    return validate_change(root, args.change_id)
+
+
+def cmd_apply(args) -> int:
+    print("apply is intentionally not implemented. This command is reserved until preflight, locking, rollback, and post-apply validation are complete.")
+    return 1
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="hermes-agentops")
     parser.add_argument("--root", default=".")
@@ -192,6 +302,16 @@ def main(argv=None) -> int:
     inv_sub = inv.add_subparsers(dest="inventory_cmd", required=True)
     p = inv_sub.add_parser("list")
     p.set_defaults(func=cmd_inventory_list)
+
+    changes = sub.add_parser("changes")
+    changes_sub = changes.add_subparsers(dest="changes_cmd", required=True)
+    p = changes_sub.add_parser("verify")
+    p.add_argument("change_id")
+    p.set_defaults(func=cmd_changes_verify)
+
+    p = sub.add_parser("apply")
+    p.add_argument("change_id", nargs="?")
+    p.set_defaults(func=cmd_apply)
 
     args = parser.parse_args(argv)
     try:
