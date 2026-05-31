@@ -16,7 +16,8 @@ policy/schema validation
   -> approval verification
   -> strict clean-state and patch applicability verification
   -> pre-apply plan generation
-  -> lock acquisition
+  -> lock acquisition record generation
+  -> future real lock acquisition
   -> rollback point creation
   -> mutation
   -> post-apply validation
@@ -36,7 +37,8 @@ policy/schema validation
 | Pre-apply plan schema | implemented | no | `mutation_enabled: false`. |
 | Pre-apply plan generation | implemented governance write | governance record only | Writes canonical `changes/<id>/pre-apply-plan.yaml` only after apply-ready verification. |
 | Apply-lock schema/checker | implemented read-only | no | Validates lock contract only. |
-| Lock acquisition | not implemented | future | Must be repository-scoped and exclusive first. |
+| Apply-lock record generation | implemented governance write | governance record only | Writes canonical `changes/<id>/apply-lock.yaml` after valid plan and no blocking lock. |
+| Real lock acquisition | not implemented | future | Future runtime/concurrency primitive; must be reviewed separately. |
 | Rollback point creation | not implemented | future | Must record pre-apply Git HEAD. |
 | Patch mutation | disabled | future | Must be separate from dry-run. |
 | Runtime-adjacent health/deployment/repair management | not implemented | future | Requires separate design; cannot bypass Hermes runtime or become business orchestration. |
@@ -60,12 +62,13 @@ A future mutation command must fail closed unless all are true:
 10. Patch applicability succeeds immediately before mutation.
 11. Pre-apply plan exists, validates, and binds to current base commit and diff evidence.
 12. Operator confirms the plan.
-13. Repository-scoped exclusive lock is acquired.
-14. Rollback point is recorded.
-15. Patch is applied only to expected profile paths.
-16. Post-apply profile validation succeeds.
-17. Audit record is written.
-18. Lock is released on success or preserved with failure evidence on failure.
+13. Apply-lock governance record is created and bound to the actual plan bytes.
+14. A future real repository-scoped exclusive lock is acquired.
+15. Rollback point is recorded.
+16. Patch is applied only to expected profile paths.
+17. Post-apply profile validation succeeds.
+18. Audit record is written.
+19. Lock is released on success or preserved with failure evidence on failure.
 
 ## Prohibited Shortcuts
 
@@ -73,7 +76,7 @@ A future implementation must not:
 
 - treat approval records as identity proof;
 - treat plan generation as apply authorization;
-- treat lock validation as lock acquisition;
+- treat lock validation or lock-record generation as mutation authority;
 - skip Git clean checks because a plan exists;
 - skip patch applicability because it passed earlier;
 - apply without rollback point;

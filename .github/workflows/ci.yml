@@ -24,7 +24,7 @@ jobs:
 
       - name: Compile CLI
         run: |
-          python -m py_compile scripts/hermes-agentops scripts/check-codeowners scripts/check-pre-apply-plan scripts/generate-pre-apply-plan scripts/check-apply-lock
+          python -m py_compile scripts/hermes-agentops scripts/check-codeowners scripts/check-pre-apply-plan scripts/generate-pre-apply-plan scripts/check-apply-lock scripts/acquire-apply-lock
 
       - name: Validate schemas
         run: |

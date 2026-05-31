@@ -81,7 +81,11 @@ Diff and output paths must fail closed on:
 - Lock records must be repository-scoped and exclusive.
 - `mutation_enabled` must remain false in current lock records.
 - Stale locks require manual review before release.
-- Lock records do not acquire locks.
+- Lock records do not acquire real runtime/concurrency locks.
+- Lock records do not authorize apply.
+- Lock record creation must bind to the actual pre-apply plan bytes.
+- Existing active, stale, or recovery-required lock records block new lock records.
+- Released locks do not block unrelated changes, but same-path overwrite is refused to preserve evidence.
 
 ## Repository Enforcement Invariants
 
@@ -95,7 +99,7 @@ Diff and output paths must fail closed on:
 A future apply implementation must:
 
 1. re-run all verification gates immediately before mutation;
-2. acquire a repository-scoped exclusive lock;
+2. acquire a repository-scoped exclusive real lock after governance lock-record checks;
 3. record a rollback point before mutation;
 4. mutate only expected managed profile paths;
 5. run post-apply validation;

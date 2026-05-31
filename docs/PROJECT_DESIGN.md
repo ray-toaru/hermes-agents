@@ -55,6 +55,7 @@ AgentOps may:
 - validate path scope and patch applicability;
 - generate non-mutating pre-apply plans;
 - validate apply-lock records without acquiring or releasing locks;
+- create constrained apply-lock governance records after a valid pre-apply plan and no blocking lock evidence;
 - document future rollback, audit, and post-apply requirements;
 - enforce repository process through CI guards and GitHub ruleset / CODEOWNERS configuration;
 - propose future health, deployment, or repair management only through explicit design and review.
@@ -80,8 +81,9 @@ AgentOps must not:
 | Pre-apply plan schema | Implemented read-only | Schema and example validate the future contract. |
 | Pre-apply plan generation | Implemented governance write | Writes only canonical `changes/<id>/pre-apply-plan.yaml`. |
 | Apply-lock schema/checker | Implemented read-only | Validates lock records; does not acquire or release locks. |
+| Apply-lock record generation | Implemented governance write | Writes canonical `changes/<id>/apply-lock.yaml`; does not release or delete locks. |
 | Runtime-adjacent health/deployment/repair management | Not implemented | Future design only; must not bypass Hermes runtime or become business orchestration. |
-| Lock acquisition/release | Not implemented | Future mutation prerequisite. |
+| Real lock acquisition/release | Not implemented | Future mutation prerequisite. |
 | Rollback point creation | Not implemented | Future mutation prerequisite. |
 | Audit record capture | Not implemented | Future mutation prerequisite. |
 | Post-apply validation | Not implemented | Future mutation prerequisite. |
