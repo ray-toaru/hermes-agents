@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""Validate approval identity evidence records.
+
+This script is intentionally read-only. It validates evidence contracts that may
+bind approval records to external review evidence. It does not authenticate users
+by itself, read secrets, mutate profiles, mutate runtime state, or enable apply.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+SUPPORTED_METHOD_PROVIDERS = {
+    "github_review": "github",
+    "github_issue_comment": "github",
+    "signed_external_attestation": "external_attestation",
+}
+
+
+def load_yaml(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def agent_from_change_id(change_id: str) -> str | None:
+    parts = change_id.split("_")
+    return parts[1] if len(parts) == 3 else None
+
+
+def expected_identity_id(change_id: str, approver: str) -> str:
+    return f"{change_id}_{approver}_identity"
+
+
+def find_matching_approval(root: Path, change_id: str, approver: str, expected_hash: str, diff_sha256: str | None) -> tuple[bool, list[str]]:
+    errors: list[str] = []
+    approvals_dir = root / "changes" / change_id / "approvals"
+    if not approvals_dir.exists():
+        return False, [f"required approvals directory is missing: {approvals_dir.relative_to(root)}"]
+    for approval_path in sorted(approvals_dir.glob("*.yaml")):
+        if sha256_file(approval_path) != expected_hash:
+            continue
+        try:
+            approval = load_yaml(approval_path)
+        except Exception as exc:
+            return False, [f"matching approval record cannot be parsed: {approval_path.relative_to(root)}: {exc}"]
+        if not isinstance(approval, dict):
+            return False, [f"matching approval record must be a mapping: {approval_path.relative_to(root)}"]
+        if approval.get("change_id") != change_id:
+            errors.append(f"matching approval record change_id mismatch: {approval_path.relative_to(root)}")
+        if approval.get("approver") != approver:
+            errors.append(f"matching approval record approver mismatch: {approval_path.relative_to(root)}")
+        if approval.get("diff_sha256") != diff_sha256:
+            errors.append(f"matching approval record diff_sha256 mismatch: {approval_path.relative_to(root)}")
+        return not errors, errors
+    return False, [f"approval_record_sha256 does not match any approval file under {approvals_dir.relative_to(root)}"]
+
+
+def validate_record(root: Path, record: Any, path: Path, validator: jsonschema.Draft202012Validator, *, require_approval_file: bool) -> list[str]:
+    errors: list[str] = []
+    for error in sorted(validator.iter_errors(record), key=lambda item: list(item.path)):
+        location = ".".join(str(part) for part in error.path) or "<root>"
+        errors.append(f"{path}: {location}: {error.message}")
+    if not isinstance(record, dict):
+        return errors
+
+    if record.get("mutation_enabled") is not False:
+        errors.append(f"{path}: mutation_enabled must remain false")
+
+    change_id = record.get("change_id")
+    approver = record.get("approver")
+    if isinstance(change_id, str):
+        expected_agent = agent_from_change_id(change_id)
+        if expected_agent and record.get("agent") != expected_agent:
+            errors.append(f"{path}: agent must match the agent segment in change_id")
+        if isinstance(approver, str) and record.get("identity_evidence_id") != expected_identity_id(change_id, approver):
+            errors.append(f"{path}: identity_evidence_id must equal change_id + '_' + approver + '_identity'")
+
+    method = record.get("identity_method")
+    provider = (record.get("external_identity") or {}).get("provider")
+    if isinstance(method, str):
+        expected_provider = SUPPORTED_METHOD_PROVIDERS.get(method)
+        if expected_provider is None:
+            errors.append(f"{path}: unsupported identity_method {method!r}")
+        elif provider != expected_provider:
+            errors.append(f"{path}: external_identity.provider must be {expected_provider!r} for {method}")
+
+    subject = (record.get("external_identity") or {}).get("subject")
+    if isinstance(approver, str) and isinstance(subject, str) and subject != approver:
+        errors.append(f"{path}: external_identity.subject must match approver")
+
+    if require_approval_file and isinstance(change_id, str) and isinstance(approver, str):
+        matched, match_errors = find_matching_approval(
+            root,
+            change_id,
+            approver,
+            str(record.get("approval_record_sha256")),
+            record.get("diff_sha256"),
+        )
+        if not matched:
+            errors.extend(f"{path}: {error}" for error in match_errors)
+
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="check-approval-identity")
+    parser.add_argument("record_paths", nargs="*")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--require-approval-file", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    default_record = root / "docs" / "examples" / "approval-identity.example.yaml"
+    record_paths = [Path(value) for value in args.record_paths] if args.record_paths else [default_record]
+    schema = load_json(root / "schemas" / "approval-identity.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    errors: list[str] = []
+    for path in record_paths:
+        errors.extend(validate_record(root, load_yaml(path), path, validator, require_approval_file=args.require_approval_file))
+    if errors:
+        print("approval identity validation failed:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    print("approval identity validation passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
