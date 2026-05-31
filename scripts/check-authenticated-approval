@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Validate authenticated approval evidence records.
+
+This checker is intentionally read-only. It validates the evidence contract that a
+future live GitHub or signed-attestation verifier must emit. It does not contact
+external services, read secrets, mutate profiles/runtime state, or authorize
+apply.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_yaml(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def parse_time(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else None
+
+
+def agent_from_change_id(change_id: str) -> str | None:
+    parts = change_id.split("_")
+    return parts[1] if len(parts) == 3 else None
+
+
+def expected_record_id(change_id: str) -> str:
+    return f"{change_id}_authenticated_approval"
+
+
+def validate_record(record: Any, path: Path, validator: jsonschema.Draft202012Validator) -> list[str]:
+    errors: list[str] = []
+    for error in sorted(validator.iter_errors(record), key=lambda item: list(item.path)):
+        location = ".".join(str(part) for part in error.path) or "<root>"
+        errors.append(f"{path}: {location}: {error.message}")
+    if not isinstance(record, dict):
+        return errors
+
+    if record.get("mutation_enabled") is not False:
+        errors.append(f"{path}: mutation_enabled must remain false")
+    if record.get("apply_authorized") is not False:
+        errors.append(f"{path}: apply_authorized must remain false")
+
+    change_id = record.get("change_id")
+    if isinstance(change_id, str):
+        if record.get("authenticated_approval_id") != expected_record_id(change_id):
+            errors.append(f"{path}: authenticated_approval_id must equal change_id + '_authenticated_approval'")
+        expected_agent = agent_from_change_id(change_id)
+        if expected_agent and record.get("agent") != expected_agent:
+            errors.append(f"{path}: agent must match the agent segment in change_id")
+
+    required_approvals = record.get("required_approvals")
+    approvals = record.get("verified_approvals") if isinstance(record.get("verified_approvals"), list) else []
+    unique_approvers = {approval.get("approver") for approval in approvals if isinstance(approval, dict) and approval.get("verified") is True}
+    if isinstance(required_approvals, int) and len(unique_approvers) < required_approvals:
+        errors.append(f"{path}: verified approvals {len(unique_approvers)} do not meet required_approvals {required_approvals}")
+    if len(unique_approvers) != len([approval for approval in approvals if isinstance(approval, dict)]):
+        errors.append(f"{path}: duplicate or invalid approver entries are not allowed")
+
+    diff_sha256 = record.get("diff_sha256")
+    for index, approval in enumerate(approvals):
+        if not isinstance(approval, dict):
+            continue
+        label = f"{path}: verified_approvals[{index}]"
+        if approval.get("diff_sha256") != diff_sha256:
+            errors.append(f"{label}: diff_sha256 must match record diff_sha256")
+        if approval.get("decision") != "approve":
+            errors.append(f"{label}: decision must be approve")
+        if approval.get("verified") is not True:
+            errors.append(f"{label}: verified must be true")
+        approved_at = parse_time(approval.get("approved_at"))
+        verified_at = parse_time(record.get("verified_at"))
+        if approved_at and verified_at and approved_at > verified_at:
+            errors.append(f"{label}: approved_at cannot be after verified_at")
+
+    if record.get("rejections_present") is not False:
+        errors.append(f"{path}: rejections_present must remain false")
+    assertions = record.get("assertions") if isinstance(record.get("assertions"), dict) else {}
+    if assertions.get("approval_threshold_met") is True and isinstance(required_approvals, int) and len(unique_approvers) < required_approvals:
+        errors.append(f"{path}: approval_threshold_met cannot be true when threshold is unmet")
+    if assertions.get("no_rejections_present") is True and record.get("rejections_present") is not False:
+        errors.append(f"{path}: no_rejections_present cannot be true when rejections are present")
+
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="check-authenticated-approval")
+    parser.add_argument("record_paths", nargs="*")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    default_record = root / "docs" / "examples" / "authenticated-approval.example.yaml"
+    record_paths = [Path(value) for value in args.record_paths] if args.record_paths else [default_record]
+    schema = load_json(root / "schemas" / "authenticated-approval.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    errors: list[str] = []
+    for path in record_paths:
+        errors.extend(validate_record(load_yaml(path), path, validator))
+    if errors:
+        print("authenticated approval validation failed:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    print("authenticated approval validation passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

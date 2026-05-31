@@ -1,0 +1,39 @@
+schema_version: 1
+authenticated_approval_id: 20260530T000000Z_agentops_aaaaaaaaaa_authenticated_approval
+change_id: 20260530T000000Z_agentops_aaaaaaaaaa
+agent: agentops
+repository:
+  provider: github
+  full_name: ray-toaru/hermes-agents
+  default_branch: main
+diff_sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+required_approvals: 1
+verified_approvals:
+  - approver: operator
+    decision: approve
+    approved_at: "2026-05-30T00:01:00Z"
+    identity_provider: github
+    identity_subject: operator
+    permission: write
+    evidence_kind: pull_request_review
+    evidence_ref: https://github.example.local/ray-toaru/hermes-agents/pull/0#pullrequestreview-0
+    diff_sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    verified: true
+rejections_present: false
+verified_at: "2026-05-30T00:02:00Z"
+verified_by: fixture-contract-only
+verifier_mode: fixture_contract_only
+mutation_enabled: false
+apply_authorized: false
+status: verified_not_authorized
+assertions:
+  repository_bound: true
+  change_id_bound: true
+  diff_hash_bound: true
+  approval_threshold_met: true
+  no_rejections_present: true
+  all_approvals_verified: true
+  does_not_authorize_apply: true
+  does_not_mutate_profiles_or_runtime: true
+  does_not_read_secret_values: true
+  business_orchestration_not_authorized: true

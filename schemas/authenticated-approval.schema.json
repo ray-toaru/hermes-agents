@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/authenticated-approval.schema.json",
+  "title": "Hermes AgentOps Authenticated Approval Evidence",
+  "description": "Read-only evidence emitted by a future live or signed approval verifier. This schema validates the evidence contract only; it does not contact external services and does not authorize apply.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "authenticated_approval_id",
+    "change_id",
+    "agent",
+    "repository",
+    "diff_sha256",
+    "required_approvals",
+    "verified_approvals",
+    "rejections_present",
+    "verified_at",
+    "verified_by",
+    "verifier_mode",
+    "mutation_enabled",
+    "apply_authorized",
+    "status",
+    "assertions"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "authenticated_approval_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_authenticated_approval$"},
+    "change_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}$"},
+    "agent": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "full_name", "default_branch"],
+      "properties": {
+        "provider": {"type": "string", "enum": ["github", "signed_attestation"]},
+        "full_name": {"type": "string", "minLength": 1},
+        "default_branch": {"type": "string", "minLength": 1}
+      }
+    },
+    "diff_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "required_approvals": {"type": "integer", "minimum": 1},
+    "verified_approvals": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "approver",
+          "decision",
+          "approved_at",
+          "identity_provider",
+          "identity_subject",
+          "permission",
+          "evidence_kind",
+          "evidence_ref",
+          "diff_sha256",
+          "verified"
+        ],
+        "properties": {
+          "approver": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+          "decision": {"type": "string", "const": "approve"},
+          "approved_at": {"type": "string", "format": "date-time"},
+          "identity_provider": {"type": "string", "enum": ["github", "signed_attestation"]},
+          "identity_subject": {"type": "string", "minLength": 1},
+          "permission": {"type": "string", "enum": ["write", "maintain", "admin"]},
+          "evidence_kind": {"type": "string", "enum": ["pull_request_review", "signed_attestation"]},
+          "evidence_ref": {"type": "string", "minLength": 1},
+          "diff_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "verified": {"type": "boolean", "const": true}
+        }
+      }
+    },
+    "rejections_present": {"type": "boolean", "const": false},
+    "verified_at": {"type": "string", "format": "date-time"},
+    "verified_by": {"type": "string", "minLength": 1},
+    "verifier_mode": {"type": "string", "enum": ["live_github", "signed_attestation", "fixture_contract_only"]},
+    "mutation_enabled": {"type": "boolean", "const": false},
+    "apply_authorized": {"type": "boolean", "const": false},
+    "status": {"type": "string", "const": "verified_not_authorized"},
+    "assertions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository_bound",
+        "change_id_bound",
+        "diff_hash_bound",
+        "approval_threshold_met",
+        "no_rejections_present",
+        "all_approvals_verified",
+        "does_not_authorize_apply",
+        "does_not_mutate_profiles_or_runtime",
+        "does_not_read_secret_values",
+        "business_orchestration_not_authorized"
+      ],
+      "properties": {
+        "repository_bound": {"type": "boolean", "const": true},
+        "change_id_bound": {"type": "boolean", "const": true},
+        "diff_hash_bound": {"type": "boolean", "const": true},
+        "approval_threshold_met": {"type": "boolean", "const": true},
+        "no_rejections_present": {"type": "boolean", "const": true},
+        "all_approvals_verified": {"type": "boolean", "const": true},
+        "does_not_authorize_apply": {"type": "boolean", "const": true},
+        "does_not_mutate_profiles_or_runtime": {"type": "boolean", "const": true},
+        "does_not_read_secret_values": {"type": "boolean", "const": true},
+        "business_orchestration_not_authorized": {"type": "boolean", "const": true}
+      }
+    }
+  }
+}
