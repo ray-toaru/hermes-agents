@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""Create a constrained apply-lock governance record.
+
+This command writes exactly one repository governance record:
+changes/<change_id>/apply-lock.yaml.
+
+It does not apply patches, release locks, mutate managed profiles, mutate runtime
+state, read secrets, or execute business actions.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import subprocess
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+BLOCKING_LOCK_STATUSES = {"active", "stale", "recovery_required"}
+
+
+def load_yaml(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def write_yaml(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(data, handle, allow_unicode=True, sort_keys=False)
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+def iso_utc(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def parse_date_time(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def run_command(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+
+
+def require_success(process: subprocess.CompletedProcess[str], label: str) -> None:
+    if process.returncode != 0:
+        details = (process.stdout + process.stderr).strip()
+        raise RuntimeError(f"{label} failed: {details}")
+
+
+def git_head(root: Path) -> str:
+    process = run_command(["git", "rev-parse", "HEAD"], root)
+    require_success(process, "git rev-parse HEAD")
+    return process.stdout.strip()
+
+
+def agent_from_change_id(change_id: str) -> str | None:
+    parts = change_id.split("_")
+    return parts[1] if len(parts) == 3 else None
+
+
+def validate_schema(root: Path, schema_name: str, record: Any) -> list[str]:
+    schema = load_json(root / "schemas" / schema_name)
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    errors = []
+    for error in sorted(validator.iter_errors(record), key=lambda item: list(item.path)):
+        location = ".".join(str(part) for part in error.path) or "<root>"
+        errors.append(f"{location}: {error.message}")
+    return errors
+
+
+def validate_pre_apply_plan(root: Path, change_id: str, plan: Any, plan_path: Path) -> list[str]:
+    errors = validate_schema(root, "pre-apply-plan.schema.json", plan)
+    if not isinstance(plan, dict):
+        return errors
+    if plan.get("mutation_enabled") is not False:
+        errors.append("mutation_enabled must remain false")
+    if plan.get("change_id") != change_id:
+        errors.append("plan change_id must match requested change_id")
+    if plan.get("plan_id") != f"{change_id}_preapply":
+        errors.append("plan_id must equal change_id + '_preapply'")
+    expected_agent = agent_from_change_id(change_id)
+    if expected_agent and plan.get("agent") != expected_agent:
+        errors.append("plan agent must match the agent segment in change_id")
+    expected_audit_path = f"changes/{change_id}/pre-apply-plan.yaml"
+    audit = plan.get("audit")
+    if isinstance(audit, dict) and audit.get("record_path") != expected_audit_path:
+        errors.append(f"audit.record_path must equal {expected_audit_path}")
+    if plan_path != (root / expected_audit_path).resolve():
+        errors.append(f"plan path must equal {expected_audit_path}")
+    return errors
+
+
+def canonical_plan_path(root: Path, change_id: str) -> Path:
+    return (root / "changes" / change_id / "pre-apply-plan.yaml").resolve()
+
+
+def canonical_lock_path(root: Path, change_id: str) -> Path:
+    return (root / "changes" / change_id / "apply-lock.yaml").resolve()
+
+
+def load_valid_plan(root: Path, change_id: str) -> tuple[dict[str, Any], Path]:
+    plan_path = canonical_plan_path(root, change_id)
+    if not plan_path.exists():
+        raise RuntimeError(f"missing pre-apply plan: {plan_path.relative_to(root)}")
+    plan = load_yaml(plan_path)
+    errors = validate_pre_apply_plan(root, change_id, plan, plan_path)
+    if errors:
+        raise RuntimeError("invalid pre-apply plan: " + "; ".join(errors))
+    assert isinstance(plan, dict)
+    return plan, plan_path
+
+
+def existing_lock_paths(root: Path) -> list[Path]:
+    changes_root = root / "changes"
+    if not changes_root.exists():
+        return []
+    return sorted(changes_root.glob("*/apply-lock.yaml"))
+
+
+def existing_lock_blocks(root: Path, candidate_path: Path, now: datetime) -> list[str]:
+    errors: list[str] = []
+    for path in existing_lock_paths(root):
+        if path.resolve() == candidate_path:
+            continue
+        lock = load_yaml(path)
+        schema_errors = validate_schema(root, "apply-lock.schema.json", lock)
+        if schema_errors:
+            errors.append(f"existing lock is invalid and requires manual review: {path.relative_to(root)}")
+            continue
+        if not isinstance(lock, dict):
+            errors.append(f"existing lock is not a mapping: {path.relative_to(root)}")
+            continue
+        status = lock.get("status")
+        if status == "released":
+            continue
+        if status == "active":
+            expires_at = lock.get("expires_at")
+            if isinstance(expires_at, str):
+                try:
+                    if parse_date_time(expires_at) <= now:
+                        errors.append(f"existing active lock is stale and requires manual review: {path.relative_to(root)}")
+                    else:
+                        errors.append(f"existing active lock blocks acquisition: {path.relative_to(root)}")
+                except ValueError:
+                    errors.append(f"existing active lock has invalid expires_at and requires manual review: {path.relative_to(root)}")
+            else:
+                errors.append(f"existing active lock has no valid expires_at and requires manual review: {path.relative_to(root)}")
+        elif status in {"stale", "recovery_required"}:
+            errors.append(f"existing {status} lock blocks acquisition: {path.relative_to(root)}")
+        else:
+            errors.append(f"existing lock has unrecognized status and requires manual review: {path.relative_to(root)}")
+    return errors
+
+
+def build_lock(
+    *,
+    change_id: str,
+    agent: str,
+    base_commit: str,
+    plan_hash: str,
+    created_at: datetime,
+    expires_in_seconds: int,
+    created_by: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "lock_id": f"{change_id}_lock",
+        "change_id": change_id,
+        "agent": agent,
+        "scope": "repository",
+        "mode": "exclusive",
+        "status": "active",
+        "created_at": iso_utc(created_at),
+        "created_by": created_by,
+        "expires_at": iso_utc(created_at + timedelta(seconds=expires_in_seconds)),
+        "base_commit": base_commit,
+        "pre_apply_plan_sha256": plan_hash,
+        "mutation_enabled": False,
+        "recovery": {
+            "manual_review_required": True,
+            "stale_lock_action": "inspect_before_release",
+            "note": "Future stale locks must be inspected before release so evidence is not erased.",
+        },
+    }
+
+
+def validate_generated_lock(root: Path, change_id: str, lock: dict[str, Any], plan_path: Path) -> list[str]:
+    errors = validate_schema(root, "apply-lock.schema.json", lock)
+    if lock.get("mutation_enabled") is not False:
+        errors.append("mutation_enabled must remain false")
+    expected_agent = agent_from_change_id(change_id)
+    if expected_agent and lock.get("agent") != expected_agent:
+        errors.append("lock agent must match the agent segment in change_id")
+    if lock.get("lock_id") != f"{change_id}_lock":
+        errors.append("lock_id must equal change_id + '_lock'")
+    if lock.get("pre_apply_plan_sha256") != sha256_file(plan_path):
+        errors.append("pre_apply_plan_sha256 must match canonical pre-apply plan bytes")
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="acquire-apply-lock")
+    parser.add_argument("change_id")
+    parser.add_argument("--root", default=".")
+    parser.add_argument("--created-by", default="operator")
+    parser.add_argument("--expires-in-seconds", type=int, default=900)
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    output = canonical_lock_path(root, args.change_id)
+    if args.expires_in_seconds < 60:
+        print("[CRIT] apply-lock.expires_in_seconds: must be at least 60 seconds")
+        return 2
+    if output.exists():
+        print(f"[CRIT] apply-lock.output: already exists {output.relative_to(root)}")
+        return 2
+    try:
+        now = utc_now()
+        plan, plan_path = load_valid_plan(root, args.change_id)
+        base_commit = plan.get("base_commit")
+        current_head = git_head(root)
+        if base_commit != current_head:
+            print(f"[CRIT] apply-lock.base_commit: plan base_commit {base_commit} does not match HEAD {current_head}")
+            return 2
+        blocking = existing_lock_blocks(root, output, now)
+        if blocking:
+            for error in blocking:
+                print(f"[CRIT] apply-lock.existing: {error}")
+            return 2
+        agent = plan.get("agent")
+        if not isinstance(agent, str):
+            print("[CRIT] apply-lock.agent: plan agent must be a string")
+            return 2
+        lock = build_lock(
+            change_id=args.change_id,
+            agent=agent,
+            base_commit=current_head,
+            plan_hash=sha256_file(plan_path),
+            created_at=now,
+            expires_in_seconds=args.expires_in_seconds,
+            created_by=args.created_by,
+        )
+        lock_errors = validate_generated_lock(root, args.change_id, lock, plan_path)
+        if lock_errors:
+            for error in lock_errors:
+                print(f"[CRIT] apply-lock.record: {error}")
+            return 2
+        write_yaml(output, lock)
+        print(output.relative_to(root))
+        return 0
+    except Exception as exc:
+        print(f"[CRIT] apply-lock.acquire: {exc}")
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

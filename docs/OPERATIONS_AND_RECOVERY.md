@@ -82,13 +82,22 @@ If a pre-apply plan fails validation or cross-field checks:
 
 ## Apply Lock Problems
 
-Current system validates lock records read-only. It does not acquire or release locks.
+Current system validates and creates lock governance records only. It does not acquire real runtime/concurrency locks, release locks, or apply patches.
 
 If a lock record fails validation:
 
 1. Do not treat it as a valid concurrency guard.
 2. Check change ID, agent, base commit, plan hash, timestamp ordering, lock ID, and stale-lock policy.
 3. If `--require-plan-file` is used, verify the canonical pre-apply plan exists and hash matches.
+
+If `acquire-apply-lock` refuses to create a record:
+
+1. Do not override the output file.
+2. If the plan is missing or invalid, regenerate it after `changes verify` passes.
+3. If `base_commit` is stale, regenerate the pre-apply plan from current `HEAD`.
+4. If an active/stale/recovery-required lock exists, inspect it manually before retrying.
+5. If a released lock exists under another change, it is informational and does not block.
+6. If a same-path lock exists, preserve evidence and create a superseding reviewed change instead of overwriting.
 
 Future stale-lock recovery must require manual inspection before release.
 
