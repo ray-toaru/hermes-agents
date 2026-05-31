@@ -50,6 +50,8 @@ The current chain is expected to stop before mutation. If an active governance l
 
 ### P3: Design future mutation prerequisites as ADRs
 
+Status: baseline ADRs added for future mutation prerequisites.
+
 Do not implement mutation until these are reviewed:
 
 1. authenticated approval verification against live GitHub or signed evidence;
@@ -59,6 +61,13 @@ Do not implement mutation until these are reviewed:
 5. post-apply validation execution;
 6. audit capture for mutation and recovery;
 7. failure recovery and retry rules.
+
+Baseline ADRs:
+
+- `docs/adr/0008-authenticated-approval-required-for-mutation.md`;
+- `docs/adr/0009-structured-command-evidence-before-execution.md`;
+- `docs/adr/0010-real-lock-and-rollback-point-before-mutation.md`;
+- `docs/adr/0011-post-apply-validation-audit-and-recovery.md`.
 
 ### P4: Sandboxed apply dry-run only
 
