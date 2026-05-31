@@ -849,20 +849,6 @@ def cmd_changes_verify(args) -> int:
     )
 
 
-def validate_change(root: Path, change_id: str, *, require_git_clean: bool = False, require_patch_applicable: bool = False) -> int:
-    validation = collect_change_validation(
-        root,
-        change_id,
-        enforce_threshold=True,
-        reject_is_error=True,
-        require_git_clean=require_git_clean,
-        require_patch_applicable=require_patch_applicable,
-    )
-    for error in validation.errors:
-        print(error)
-    return 2 if validation.errors else 0
-
-
 def cmd_apply(args) -> int:
     print("apply is intentionally not implemented. This command is reserved until preflight, locking, rollback, and post-apply validation are complete.")
     return 1
