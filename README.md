@@ -4,6 +4,21 @@ Hermes agents lifecycle-management repository.
 
 This repository is the declaration and governance layer for Hermes AgentOps Manager and managed Hermes agent profiles.
 
+## Start Here
+
+New development agents should read these project-level design documents before changing code, schemas, or governance records:
+
+- `docs/PROJECT_DESIGN.md` — project goals, non-goals, system boundary, and current implementation status.
+- `docs/ARCHITECTURE.md` — layers, components, and responsibility boundaries.
+- `docs/DOMAIN_MODEL.md` — core records and how they bind to each other.
+- `docs/STATE_MACHINE.md` — change/apply lifecycle states and allowed transitions.
+- `docs/SAFETY_INVARIANTS.md` — non-negotiable safety rules.
+- `docs/THREAT_MODEL.md` — attacker model and mitigations.
+- `docs/APPLY_PIPELINE_DESIGN.md` — complete future apply pipeline, including which phases are implemented, read-only, design-only, or blocked.
+- `docs/OPERATIONS_AND_RECOVERY.md` — CI, ruleset, stale PR, stale lock, and future recovery handling.
+
+Architecture decisions that should not be repeatedly reopened are recorded under `docs/adr/`.
+
 ## Purpose
 
 This repository stores:
@@ -15,6 +30,8 @@ This repository stores:
 - policies
 - CI checks
 - change proposal records
+- pre-apply governance records
+- apply-lock design records
 
 It does not store runtime state, real secrets, logs, sessions, or business execution state.
 
@@ -23,8 +40,9 @@ It does not store runtime state, real secrets, logs, sessions, or business execu
 - AgentOps manages agents; it does not orchestrate business tasks.
 - A Hermes profile is the minimum managed unit.
 - Critical changes must be diff-first.
-- Real secret values must never be committed.
+- Real secret values must never be committed or read by AgentOps.
 - Hermes runtime mechanisms must not be bypassed.
+- `apply` remains disabled until the full gated mutation pipeline is implemented and reviewed.
 
 ## Repository Workflow
 
@@ -36,7 +54,7 @@ Issue → branch → pull request → CI → review → merge
 
 No direct feature work should be pushed to `main`.
 
-## Initial Governance
+## Governance
 
 See:
 
@@ -44,3 +62,5 @@ See:
 - `CONTRIBUTING.md`
 - `.github/pull_request_template.md`
 - `.github/ISSUE_TEMPLATE/task.yml`
+- `.github/CODEOWNERS`
+- `docs/repository-governance-baseline.md`
