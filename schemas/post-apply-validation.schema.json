@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/post-apply-validation.schema.json",
+  "title": "Hermes AgentOps Post-Apply Validation Evidence",
+  "description": "A read-only governance evidence record for validating the outcome of a future operator-reviewed apply. This schema does not enable apply and does not mutate profiles or runtime state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "post_apply_validation_id",
+    "change_id",
+    "agent",
+    "created_at",
+    "created_by",
+    "mutation_enabled",
+    "status",
+    "expected_head",
+    "actual_head",
+    "audit_record_sha256",
+    "validation_commands",
+    "boundaries",
+    "failure_recovery"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "post_apply_validation_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_post_apply_validation$"},
+    "change_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}$"},
+    "agent": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "created_by": {"type": "string", "minLength": 1},
+    "mutation_enabled": {"type": "boolean", "const": false},
+    "status": {"type": "string", "enum": ["success", "failed"]},
+    "expected_head": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+    "actual_head": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+    "audit_record_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "validation_commands": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "command", "exit_code", "status", "output_sha256", "redacted_summary"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$"},
+          "command": {"type": "string", "minLength": 1},
+          "exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
+          "status": {"type": "string", "enum": ["success", "failed"]},
+          "output_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "redacted_summary": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "validator_is_read_only",
+        "no_secret_values_read",
+        "no_runtime_state_mutated_by_validator",
+        "no_business_actions_executed",
+        "apply_not_performed_by_validator"
+      ],
+      "properties": {
+        "validator_is_read_only": {"type": "boolean", "const": true},
+        "no_secret_values_read": {"type": "boolean", "const": true},
+        "no_runtime_state_mutated_by_validator": {"type": "boolean", "const": true},
+        "no_business_actions_executed": {"type": "boolean", "const": true},
+        "apply_not_performed_by_validator": {"type": "boolean", "const": true}
+      }
+    },
+    "failure_recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manual_review_required", "rollback_not_executed_by_validator", "note"],
+      "properties": {
+        "manual_review_required": {"type": "boolean", "const": true},
+        "rollback_not_executed_by_validator": {"type": "boolean", "const": true},
+        "note": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

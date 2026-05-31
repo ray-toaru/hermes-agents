@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Validate post-apply validation evidence records.
+
+This script is intentionally read-only. It validates evidence records for a
+future operator-reviewed apply pipeline. It does not apply patches, read secrets,
+mutate profiles, mutate runtime state, or execute rollback.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+SAFE_COMMAND_PREFIXES = (
+    "python scripts/hermes-agentops validate",
+    "python scripts/hermes-agentops validate-schemas",
+    "python scripts/check-pre-apply-plan",
+    "python scripts/check-apply-lock",
+    "python scripts/check-rollback-point",
+    "python scripts/check-audit-record",
+    "python scripts/check-approval-identity",
+    "python scripts/check-post-apply-validation",
+    "git diff --check",
+    "git status --porcelain",
+    "pytest -q",
+)
+UNSAFE_COMMAND_TOKENS = (
+    ";", "&&", "||", "|", "`", "$(", ">", "<",
+    " rm ", " rm -", "git reset", "git revert", "git push", "git commit",
+    "docker ", "podman ", "systemctl ", "curl ", "wget ", "terraform apply", "kubectl ",
+)
+
+
+def load_yaml(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def agent_from_change_id(change_id: str) -> str | None:
+    parts = change_id.split("_")
+    return parts[1] if len(parts) == 3 else None
+
+
+def is_safe_command(command: Any) -> bool:
+    if not isinstance(command, str) or not command.strip():
+        return False
+    stripped = command.strip()
+    lowered = f" {stripped.lower()} "
+    if any(token in lowered for token in UNSAFE_COMMAND_TOKENS):
+        return False
+    return stripped.startswith(SAFE_COMMAND_PREFIXES)
+
+
+def validate_command_evidence(record: dict[str, Any], path: Path, errors: list[str]) -> None:
+    commands = record.get("validation_commands") or []
+    for index, command_record in enumerate(commands):
+        if not isinstance(command_record, dict):
+            continue
+        label = f"{path}: validation_commands[{index}]"
+        if not is_safe_command(command_record.get("command")):
+            errors.append(f"{label}: command is not in the read-only validation allowlist")
+        status = command_record.get("status")
+        exit_code = command_record.get("exit_code")
+        if status == "success" and exit_code != 0:
+            errors.append(f"{label}: successful validation command must have exit_code 0")
+        if status == "failed" and exit_code == 0:
+            errors.append(f"{label}: failed validation command must have a non-zero exit_code")
+
+
+def validate_status_consistency(record: dict[str, Any], path: Path, errors: list[str]) -> None:
+    status = record.get("status")
+    expected_head = record.get("expected_head")
+    actual_head = record.get("actual_head")
+    commands = record.get("validation_commands") or []
+    command_statuses = [command.get("status") for command in commands if isinstance(command, dict)]
+
+    if status == "success":
+        if expected_head != actual_head:
+            errors.append(f"{path}: successful post-apply validation requires actual_head to equal expected_head")
+        if any(command_status != "success" for command_status in command_statuses):
+            errors.append(f"{path}: successful post-apply validation requires all validation commands to succeed")
+    if status == "failed":
+        if expected_head == actual_head and all(command_status == "success" for command_status in command_statuses):
+            errors.append(f"{path}: failed post-apply validation must include failed command evidence or head mismatch")
+
+
+def validate_record(root: Path, record: Any, path: Path, validator: jsonschema.Draft202012Validator, *, require_audit_file: bool) -> list[str]:
+    errors: list[str] = []
+    for error in sorted(validator.iter_errors(record), key=lambda item: list(item.path)):
+        location = ".".join(str(part) for part in error.path) or "<root>"
+        errors.append(f"{path}: {location}: {error.message}")
+    if not isinstance(record, dict):
+        return errors
+
+    if record.get("mutation_enabled") is not False:
+        errors.append(f"{path}: mutation_enabled must remain false")
+
+    change_id = record.get("change_id")
+    if isinstance(change_id, str):
+        if record.get("post_apply_validation_id") != f"{change_id}_post_apply_validation":
+            errors.append(f"{path}: post_apply_validation_id must equal change_id + '_post_apply_validation'")
+        expected_agent = agent_from_change_id(change_id)
+        if expected_agent and record.get("agent") != expected_agent:
+            errors.append(f"{path}: agent must match the agent segment in change_id")
+        audit_path = root / "changes" / change_id / "audit-record.yaml"
+        if audit_path.exists():
+            expected_hash = sha256_file(audit_path)
+            if record.get("audit_record_sha256") != expected_hash:
+                errors.append(f"{path}: audit_record_sha256 does not match {audit_path.relative_to(root)}")
+        elif require_audit_file:
+            errors.append(f"{path}: required audit record file is missing: {audit_path.relative_to(root)}")
+
+    validate_command_evidence(record, path, errors)
+    validate_status_consistency(record, path, errors)
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="check-post-apply-validation")
+    parser.add_argument("record_paths", nargs="*")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--require-audit-file", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    default_record = root / "docs" / "examples" / "post-apply-validation.example.yaml"
+    record_paths = [Path(value) for value in args.record_paths] if args.record_paths else [default_record]
+    schema = load_json(root / "schemas" / "post-apply-validation.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    errors: list[str] = []
+    for path in record_paths:
+        errors.extend(validate_record(root, load_yaml(path), path, validator, require_audit_file=args.require_audit_file))
+    if errors:
+        print("post-apply validation evidence failed:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    print("post-apply validation evidence passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
