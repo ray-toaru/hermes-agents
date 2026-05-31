@@ -14,7 +14,7 @@ A future apply must be a linear, fail-closed pipeline:
 policy/schema validation
   -> change verification
   -> approval verification
-  -> clean-state and patch applicability
+  -> strict clean-state and patch applicability verification
   -> pre-apply plan generation
   -> lock acquisition record generation
   -> future real lock acquisition
@@ -31,15 +31,17 @@ policy/schema validation
 | --- | --- | --- | --- |
 | Policy/schema validation | implemented | no | Validates policy, schema, profile metadata. |
 | Change verification | implemented | no | Verifies proposal, diff, approvals, path scope, hashes. |
-| Git clean check | implemented dry-run | no | Currently optional verifier gate; future apply must require. |
-| Patch applicability | implemented dry-run | no | Uses `git apply --check`; no patch application. |
+| Git clean check | implemented dry-run | no | Optional for base verify; required by plan generation and future apply. |
+| Patch applicability | implemented dry-run | no | Optional for base verify; required by plan generation and future apply; uses `git apply --check`. |
+| Apply-ready verification | implemented strict gate | no | `changes verify --check-git-clean --check-patch-applicable`. |
 | Pre-apply plan schema | implemented | no | `mutation_enabled: false`. |
-| Pre-apply plan generation | implemented governance write | governance record only | Writes canonical `changes/<id>/pre-apply-plan.yaml`. |
+| Pre-apply plan generation | implemented governance write | governance record only | Writes canonical `changes/<id>/pre-apply-plan.yaml` only after apply-ready verification. |
 | Apply-lock schema/checker | implemented read-only | no | Validates lock contract only. |
 | Apply-lock record generation | implemented governance write | governance record only | Writes canonical `changes/<id>/apply-lock.yaml` after valid plan and no blocking lock. |
 | Real lock acquisition | not implemented | future | Future runtime/concurrency primitive; must be reviewed separately. |
 | Rollback point creation | not implemented | future | Must record pre-apply Git HEAD. |
 | Patch mutation | disabled | future | Must be separate from dry-run. |
+| Runtime-adjacent health/deployment/repair management | not implemented | future | Requires separate design; cannot bypass Hermes runtime or become business orchestration. |
 | Post-apply validation | not implemented | future | Must validate profile and governance state after mutation. |
 | Audit record | not implemented | future | Must capture commands, outputs, exit codes, Git HEADs, lock lifecycle. |
 | Lock release/recovery | not implemented | future | Must preserve failure evidence when needed. |
@@ -80,7 +82,8 @@ A future implementation must not:
 - apply without rollback point;
 - apply without audit record;
 - delete stale lock evidence automatically;
-- mutate runtime state or execute business actions.
+- mutate runtime state or execute business actions;
+- introduce runtime-adjacent management by silently expanding validators, plan generation, or lock validation.
 
 ## Failure Handling
 
@@ -109,3 +112,5 @@ Do not jump directly to mutation. Implement in this order:
 8. mutation implementation behind explicit non-default command;
 9. failure recovery tests;
 10. ruleset and CODEOWNERS review of the whole pipeline.
+
+Runtime-adjacent health, deployment, or repair management should be designed as a separate track unless it is strictly required by the apply pipeline. It must begin read-only where possible and must not become business task routing.
