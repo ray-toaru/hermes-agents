@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""Validate audit record examples.
+
+This script is intentionally read-only. It validates audit records and never
+applies patches, creates rollback points, releases locks, reads secrets, mutates
+profiles, mutates runtime state, or executes business actions.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+SAFE_COMMAND_PREFIXES = (
+    "python scripts/hermes-agentops changes verify ",
+    "python scripts/hermes-agentops validate",
+    "python scripts/hermes-agentops validate-schemas",
+    "python scripts/check-pre-apply-plan",
+    "python scripts/check-apply-lock",
+    "python scripts/check-rollback-point",
+    "python scripts/check-audit-record",
+    "git apply --check",
+    "pytest -q",
+)
+UNSAFE_COMMAND_TOKENS = (
+    ";", "&&", "||", "|", "`", "$(", ">", "<",
+    " rm ", " rm -", "git reset", "git revert", "git push", "git commit",
+    "docker ", "podman ", "systemctl ", "curl ", "wget ", "terraform apply", "kubectl ",
+)
+
+
+def load_yaml(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def agent_from_change_id(change_id: str) -> str | None:
+    parts = change_id.split("_")
+    return parts[1] if len(parts) == 3 else None
+
+
+def is_safe_command(command: Any) -> bool:
+    if not isinstance(command, str) or not command.strip():
+        return False
+    stripped = command.strip()
+    lowered = f" {stripped.lower()} "
+    if any(token in lowered for token in UNSAFE_COMMAND_TOKENS):
+        return False
+    return stripped.startswith(SAFE_COMMAND_PREFIXES)
+
+
+def validate_command_evidence(record: dict[str, Any], path: Path, errors: list[str]) -> None:
+    for index, command_record in enumerate(record.get("commands") or []):
+        if not isinstance(command_record, dict):
+            continue
+        label = f"{path}: commands[{index}]"
+        if not is_safe_command(command_record.get("command")):
+            errors.append(f"{label}: command is not in the read-only allowlist")
+        status = command_record.get("status")
+        exit_code = command_record.get("exit_code")
+        if status == "success" and exit_code != 0:
+            errors.append(f"{label}: successful command evidence must have exit_code 0")
+        if status == "failed" and exit_code == 0:
+            errors.append(f"{label}: failed command evidence must have a non-zero exit_code")
+
+
+def validate_record(root: Path, record: Any, path: Path, validator: jsonschema.Draft202012Validator, *, require_evidence_files: bool) -> list[str]:
+    errors: list[str] = []
+    for error in sorted(validator.iter_errors(record), key=lambda item: list(item.path)):
+        location = ".".join(str(part) for part in error.path) or "<root>"
+        errors.append(f"{path}: {location}: {error.message}")
+    if not isinstance(record, dict):
+        return errors
+
+    if record.get("mutation_enabled") is not False:
+        errors.append(f"{path}: mutation_enabled must remain false")
+
+    change_id = record.get("change_id")
+    if isinstance(change_id, str):
+        if record.get("audit_record_id") != f"{change_id}_audit":
+            errors.append(f"{path}: audit_record_id must equal change_id + '_audit'")
+        expected_agent = agent_from_change_id(change_id)
+        if expected_agent and record.get("agent") != expected_agent:
+            errors.append(f"{path}: agent must match the agent segment in change_id")
+
+        evidence = record.get("evidence") or {}
+        evidence_paths = {
+            "pre_apply_plan_sha256": root / "changes" / change_id / "pre-apply-plan.yaml",
+            "apply_lock_sha256": root / "changes" / change_id / "apply-lock.yaml",
+            "rollback_point_sha256": root / "changes" / change_id / "rollback-point.yaml",
+        }
+        for field, evidence_path in evidence_paths.items():
+            if evidence_path.exists():
+                expected_hash = sha256_file(evidence_path)
+                if evidence.get(field) != expected_hash:
+                    errors.append(f"{path}: {field} does not match {evidence_path.relative_to(root)}")
+            elif require_evidence_files:
+                errors.append(f"{path}: required evidence file is missing: {evidence_path.relative_to(root)}")
+
+    git_info = record.get("git") or {}
+    if git_info.get("head_before") != git_info.get("head_after"):
+        errors.append(f"{path}: head_before must equal head_after because audit validation is read-only")
+    if git_info.get("working_tree_clean_before") is not True or git_info.get("working_tree_clean_after") is not True:
+        errors.append(f"{path}: audit validation requires clean working tree evidence before and after")
+
+    validate_command_evidence(record, path, errors)
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="check-audit-record")
+    parser.add_argument("record_paths", nargs="*")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--require-evidence-files", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    default_record = root / "docs" / "examples" / "audit-record.example.yaml"
+    record_paths = [Path(value) for value in args.record_paths] if args.record_paths else [default_record]
+    schema = load_json(root / "schemas" / "audit-record.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    errors: list[str] = []
+    for path in record_paths:
+        errors.extend(validate_record(root, load_yaml(path), path, validator, require_evidence_files=args.require_evidence_files))
+    if errors:
+        print("audit record validation failed:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    print("audit record validation passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
