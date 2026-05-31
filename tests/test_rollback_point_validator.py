@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,13 @@ def write_yaml(path: Path, data: dict[str, Any]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     return path
+
+
+def prepare_evidence_root(root: Path) -> Path:
+    schemas = root / "schemas"
+    schemas.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(ROOT / "schemas" / "rollback-point.schema.json", schemas / "rollback-point.schema.json")
+    return root
 
 
 def valid_record() -> dict[str, Any]:
@@ -112,15 +120,17 @@ def test_rollback_point_checker_rejects_bad_plan_hash(tmp_path: Path) -> None:
 
 
 def test_rollback_point_checker_requires_evidence_files(tmp_path: Path) -> None:
+    evidence_root = prepare_evidence_root(tmp_path)
     path = write_yaml(tmp_path / "rollback.yaml", valid_record())
-    result = run_checker(tmp_path, path, "--require-evidence-files")
+    result = run_checker(evidence_root, path, "--require-evidence-files")
     assert result.returncode == 1
     assert "required pre-apply plan file is missing" in result.stdout
     assert "required apply lock file is missing" in result.stdout
 
 
 def test_rollback_point_checker_binds_existing_evidence_hashes(tmp_path: Path) -> None:
-    change_dir = tmp_path / "changes" / CHANGE_ID
+    evidence_root = prepare_evidence_root(tmp_path)
+    change_dir = evidence_root / "changes" / CHANGE_ID
     plan_path = change_dir / "pre-apply-plan.yaml"
     lock_path = change_dir / "apply-lock.yaml"
     plan_path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,11 +141,11 @@ def test_rollback_point_checker_binds_existing_evidence_hashes(tmp_path: Path) -
     record["apply_lock_sha256"] = hashlib.sha256(lock_path.read_bytes()).hexdigest()
     record_path = write_yaml(tmp_path / "rollback.yaml", record)
 
-    result = run_checker(tmp_path, record_path, "--require-evidence-files")
+    result = run_checker(evidence_root, record_path, "--require-evidence-files")
     assert result.returncode == 0, result.stdout + result.stderr
 
     record["apply_lock_sha256"] = "c" * 64
     write_yaml(record_path, record)
-    result = run_checker(tmp_path, record_path, "--require-evidence-files")
+    result = run_checker(evidence_root, record_path, "--require-evidence-files")
     assert result.returncode == 1
     assert "apply_lock_sha256 does not match" in result.stdout
