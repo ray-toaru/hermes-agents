@@ -82,6 +82,14 @@ def test_apply_lock_analysis_reports_no_locks(tmp_path: Path) -> None:
     assert report["summary"]["has_blocking_locks"] is False
 
 
+def test_apply_lock_analysis_rejects_output_argument(tmp_path: Path) -> None:
+    root = prepare_root(tmp_path)
+    output_path = tmp_path / "profiles" / "agentops" / "report.yaml"
+    result = run_analyzer(root, "--now", NOW, "--output", str(output_path))
+    assert result.returncode == 2
+    assert not output_path.exists()
+
+
 def test_apply_lock_analysis_classifies_active_and_released(tmp_path: Path) -> None:
     root = prepare_root(tmp_path)
     active_id = "20260530T000000Z_agentops_aaaaaaaaaa"

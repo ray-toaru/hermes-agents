@@ -170,7 +170,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="analyze-apply-locks")
     parser.add_argument("--root", default=str(DEFAULT_ROOT))
     parser.add_argument("--now", default=None, help="RFC3339 timestamp used for deterministic expiry analysis")
-    parser.add_argument("--output", default=None)
     parser.add_argument("--validate-report", action="store_true")
     parser.add_argument("record_paths", nargs="*")
     return parser.parse_args(argv)
@@ -206,11 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         for error in errors:
             print(f"- {error}")
         return 1
-    text = yaml.safe_dump(report, sort_keys=False)
-    if args.output:
-        Path(args.output).write_text(text, encoding="utf-8")
-    else:
-        print(text, end="")
+    print(yaml.safe_dump(report, sort_keys=False), end="")
     return 0
 
 
