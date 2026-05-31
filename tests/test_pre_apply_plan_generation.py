@@ -76,3 +76,36 @@ def test_generate_pre_apply_plan_refuses_overwrite_by_default(tmp_path: Path) ->
 
     third = run_generator(root, change_id, "--overwrite")
     assert third.returncode == 0, third.stdout + third.stderr
+
+
+def test_generate_pre_apply_plan_rejects_output_under_profile(tmp_path: Path) -> None:
+    root = prepare_root(tmp_path)
+    init_git_profile(root)
+    change_id = write_change(root)
+
+    result = run_generator(root, change_id, "--output", "profiles/agentops/pre-apply-plan.yaml")
+    assert result.returncode == 2
+    assert "output must be exactly" in result.stdout
+    assert not (root / "profiles" / "agentops" / "pre-apply-plan.yaml").exists()
+
+
+def test_generate_pre_apply_plan_rejects_absolute_output_outside_repo(tmp_path: Path) -> None:
+    root = prepare_root(tmp_path / "repo")
+    init_git_profile(root)
+    change_id = write_change(root)
+    outside = tmp_path / "outside.yaml"
+
+    result = run_generator(root, change_id, "--output", str(outside))
+    assert result.returncode == 2
+    assert "output must be exactly" in result.stdout
+    assert not outside.exists()
+
+
+def test_generate_pre_apply_plan_allows_explicit_canonical_output(tmp_path: Path) -> None:
+    root = prepare_root(tmp_path)
+    init_git_profile(root)
+    change_id = write_change(root)
+
+    result = run_generator(root, change_id, "--output", f"changes/{change_id}/pre-apply-plan.yaml")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (root / "changes" / change_id / "pre-apply-plan.yaml").exists()

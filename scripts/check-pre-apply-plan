@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import jsonschema
 import yaml
@@ -19,14 +20,43 @@ SCHEMA = ROOT / "schemas" / "pre-apply-plan.schema.json"
 DEFAULT_PLAN = ROOT / "docs" / "examples" / "pre-apply-plan.example.yaml"
 
 
-def load_yaml(path: Path):
+def load_yaml(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as handle:
         return yaml.safe_load(handle)
 
 
-def load_json(path: Path):
+def load_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def agent_from_change_id(change_id: str) -> str | None:
+    parts = change_id.split("_")
+    return parts[1] if len(parts) == 3 else None
+
+
+def validate_plan(plan: Any, path: Path, validator: jsonschema.Draft202012Validator) -> list[str]:
+    errors: list[str] = []
+    for error in sorted(validator.iter_errors(plan), key=lambda item: list(item.path)):
+        location = ".".join(str(part) for part in error.path) or "<root>"
+        errors.append(f"{path}: {location}: {error.message}")
+    if not isinstance(plan, dict):
+        return errors
+    if plan.get("mutation_enabled") is not False:
+        errors.append(f"{path}: mutation_enabled must remain false")
+
+    change_id = plan.get("change_id")
+    if isinstance(change_id, str):
+        if plan.get("plan_id") != f"{change_id}_preapply":
+            errors.append(f"{path}: plan_id must equal change_id + '_preapply'")
+        expected_agent = agent_from_change_id(change_id)
+        if expected_agent and plan.get("agent") != expected_agent:
+            errors.append(f"{path}: agent must match the agent segment in change_id")
+        expected_audit_path = f"changes/{change_id}/pre-apply-plan.yaml"
+        audit = plan.get("audit")
+        if isinstance(audit, dict) and audit.get("record_path") != expected_audit_path:
+            errors.append(f"{path}: audit.record_path must equal {expected_audit_path}")
+    return errors
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,12 +69,7 @@ def main(argv: list[str] | None = None) -> int:
 
     errors: list[str] = []
     for path in plan_paths:
-        plan = load_yaml(path)
-        for error in sorted(validator.iter_errors(plan), key=lambda item: list(item.path)):
-            location = ".".join(str(part) for part in error.path) or "<root>"
-            errors.append(f"{path}: {location}: {error.message}")
-        if isinstance(plan, dict) and plan.get("mutation_enabled") is not False:
-            errors.append(f"{path}: mutation_enabled must remain false")
+        errors.extend(validate_plan(load_yaml(path), path, validator))
 
     if errors:
         print("pre-apply plan validation failed:")

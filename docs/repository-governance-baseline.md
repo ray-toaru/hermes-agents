@@ -29,14 +29,19 @@ References:
 The repository files above are not a substitute for GitHub enforcement. Configure `main` with branch protection or an equivalent ruleset:
 
 1. Require a pull request before merging.
-2. Require at least one approval.
-3. Require review from Code Owners.
-4. Require status checks before merging, including the `validate` job from the `ci` workflow.
-5. Require conversation resolution before merging.
-6. Do not allow force pushes.
-7. Do not allow deletions.
-8. Prefer applying restrictions to administrators when feasible.
-9. Prefer strict required status checks when multiple collaborators are active.
+2. For a single-owner repository, do not require author self-approval. GitHub rejects self-approval, so use zero required approvals or a deliberate bypass model while retaining PR and status-check enforcement.
+3. Require status checks before merging, including the real `validate` job from the `ci` workflow.
+4. Require conversation resolution before merging.
+5. Do not allow force pushes.
+6. Do not allow deletions.
+7. Require linear history and allow only squash or rebase merges when linear history is enabled.
+8. Prefer strict required status checks when multiple collaborators are active.
+
+## Current ruleset evidence
+
+The default-branch ruleset was exported and reviewed as `protect-default-branch`. It targets `~DEFAULT_BRANCH`, has `enforcement: active`, includes deletion and non-fast-forward protection, requires PR flow, requires status check `validate`, and uses linear history. Earlier configuration with `lint`, `test`, and `build` status checks was rejected because those checks did not exist in this repository; the real check is the `validate` job from the `ci` workflow.
+
+The ruleset smoke test PR verified that the corrected status check runs successfully and that the single-owner mode can merge through the PR path after the self-approval deadlock was removed. Keep future exported ruleset JSON or screenshots/settings evidence alongside this document whenever the ruleset changes.
 
 ## Attack / defense convergence
 
