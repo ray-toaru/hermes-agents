@@ -23,6 +23,8 @@ Every behavior-changing PR must update project-level docs when it changes implem
 
 ### P1: Review and harden evidence semantics
 
+Status: implemented for the current evidence records.
+
 Before adding mutation, review existing records for ambiguity:
 
 - readiness reports must never imply apply authorization;
@@ -31,6 +33,8 @@ Before adding mutation, review existing records for ambiguity:
 - lock analysis must not become lock release authority.
 
 ### P2: Add read-only integration tests
+
+Status: implemented for the current evidence chain.
 
 Create end-to-end tests that assemble a full evidence chain in a temporary repository without mutating managed profiles:
 
@@ -41,6 +45,8 @@ Create end-to-end tests that assemble a full evidence chain in a temporary repos
 5. apply-lock governance record;
 6. apply-lock analysis;
 7. readiness report.
+
+The current chain is expected to stop before mutation. If an active governance lock is present, readiness may validate as `blocked`, not complete.
 
 ### P3: Design future mutation prerequisites as ADRs
 
