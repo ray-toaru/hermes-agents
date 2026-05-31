@@ -17,6 +17,8 @@ Current AgentOps scripts must not:
 - bypass Hermes provider runtime resolution;
 - bypass Hermes tool registry or dispatch.
 
+Future runtime-adjacent health, deployment, or repair management must be introduced through explicit design, read-only-first validation where possible, approval gates for service-affecting actions, and no business orchestration.
+
 ## Secret Boundary
 
 Real secret values must never be committed, read, printed, diffed, stored in change records, or included in audit records.
@@ -68,7 +70,7 @@ Diff and output paths must fail closed on:
 ## Pre-Apply Plan Invariants
 
 - `mutation_enabled` must remain false.
-- Generation must call the existing verification path.
+- Generation must call `changes verify --check-git-clean --check-patch-applicable`.
 - Failed verification must write no plan.
 - Plan output must be canonical: `changes/<change_id>/pre-apply-plan.yaml`.
 - The plan does not authorize apply.

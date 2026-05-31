@@ -142,7 +142,22 @@ Responsibility:
 - bind lock to change ID, plan hash, and base commit;
 - require stale-lock manual inspection.
 
-### 8. Future Mutation Layer
+### 8. Runtime-Adjacent Management Layer
+
+Current status: not implemented.
+
+Future responsibilities may include health, deployment, repair, restart, gateway, cron, or container management. This layer is allowed by the original AgentOps mission only when it is designed explicitly and remains separate from business orchestration.
+
+Future runtime-adjacent management must:
+
+- start read-only where possible;
+- avoid real secret reads;
+- avoid treating runtime state as governance authority;
+- require explicit approval for destructive or service-affecting actions;
+- preserve Hermes provider resolution and tool dispatch boundaries;
+- never execute business tasks or route work between managed agents.
+
+### 9. Future Mutation Layer
 
 Current status: disabled.
 
@@ -160,7 +175,7 @@ No current code may assume this layer exists.
 
 ## Boundary with Hermes Runtime
 
-AgentOps repository governance must not replace or bypass Hermes runtime components. In particular, AgentOps does not:
+AgentOps repository governance must not replace or bypass Hermes runtime components. In particular, current AgentOps scripts do not:
 
 - resolve model providers;
 - dispatch Hermes tools;
@@ -169,7 +184,7 @@ AgentOps repository governance must not replace or bypass Hermes runtime compone
 - read runtime state databases;
 - read `.env` or secret values.
 
-AgentOps may validate that a profile declares references consistently, but it must not interpret itself as the runtime authority for those references.
+AgentOps may validate that a profile declares references consistently, but it must not interpret itself as the runtime authority for those references. Future runtime-adjacent health, deployment, or repair management must be introduced as its own reviewed layer rather than by silently expanding validators, plans, or lock records.
 
 ## Dependency Direction
 

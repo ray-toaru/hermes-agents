@@ -30,11 +30,15 @@ Any required record is malformed, mismatched, hash-invalid, duplicated, path-inv
 
 ### verified
 
-`changes verify` passes with required gates.
+Base `changes verify` passes. This means the proposal, diff, approvals, policy, and path scope are trusted enough for non-mutating governance status, but it is not sufficient for pre-apply plan generation or future mutation.
+
+### apply_ready_verified
+
+`changes verify --check-git-clean --check-patch-applicable` passes. This stricter state is required before generating a pre-apply plan and must be re-checked immediately before any future mutation.
 
 ### pre_apply_planned
 
-A schema-valid `pre-apply-plan.yaml` was generated after verification.
+A schema-valid `pre-apply-plan.yaml` was generated after `apply_ready_verified`.
 
 ### lock_validated
 
@@ -85,7 +89,8 @@ proposed -> invalid
 partially_approved -> approved
 partially_approved -> rejected
 approved -> verified
-verified -> pre_apply_planned
+verified -> apply_ready_verified
+apply_ready_verified -> pre_apply_planned
 pre_apply_planned -> lock_validated
 ```
 
@@ -96,6 +101,7 @@ All current transitions are non-runtime governance transitions.
 ```text
 approved -> applying
 verified -> applying
+apply_ready_verified -> applying
 pre_apply_planned -> applying
 lock_validated -> locked
 lock_validated -> applying
@@ -111,6 +117,7 @@ Future apply must use a linear, fail-closed sequence:
 ```text
 approved
   -> verified
+  -> apply_ready_verified
   -> pre_apply_planned
   -> locked
   -> rollback_point_recorded
@@ -139,7 +146,8 @@ A future implementation must abort on first failed gate. It must not continue mu
 | approved | `changes verify` threshold logic | current |
 | rejected | approval records + status view | current |
 | invalid | validators | current |
-| verified | `changes verify` | current |
+| verified | base `changes verify` | current |
+| apply_ready_verified | `changes verify --check-git-clean --check-patch-applicable` | current strict gate |
 | pre_apply_planned | `generate-pre-apply-plan` | current governance write |
 | lock_validated | `check-apply-lock` | current read-only |
 | locked | future lock acquisition | future |

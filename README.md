@@ -8,6 +8,7 @@ This repository is the declaration and governance layer for Hermes AgentOps Mana
 
 New development agents should read these project-level design documents before changing code, schemas, or governance records:
 
+- `docs/EVIDENCE_BASELINE.md` — upstream Hermes evidence and derived AgentOps constraints.
 - `docs/PROJECT_DESIGN.md` — project goals, non-goals, system boundary, and current implementation status.
 - `docs/ARCHITECTURE.md` — layers, components, and responsibility boundaries.
 - `docs/DOMAIN_MODEL.md` — core records and how they bind to each other.
@@ -42,6 +43,8 @@ It does not store runtime state, real secrets, logs, sessions, or business execu
 - Critical changes must be diff-first.
 - Real secret values must never be committed or read by AgentOps.
 - Hermes runtime mechanisms must not be bypassed.
+- Current scripts do not mutate managed profiles or runtime state.
+- Future runtime-adjacent health, deployment, or repair management requires a separate design, approval gates, and no Hermes runtime bypass.
 - `apply` remains disabled until the full gated mutation pipeline is implemented and reviewed.
 
 ## Repository Workflow

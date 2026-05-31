@@ -100,8 +100,9 @@ Threat: A plan is generated or applied against unexpected repository state.
 
 Mitigations:
 
-- optional Git clean and patch applicability gates now;
-- future apply must require both immediately before mutation;
+- base verification is non-mutating;
+- plan generation requires `changes verify --check-git-clean --check-patch-applicable`;
+- future apply must re-run both immediately before mutation;
 - pre-apply plan records base commit.
 
 ### Plan reuse
@@ -134,15 +135,18 @@ Mitigations:
 - policy forbids reading secret values;
 - docs and approval acknowledgements explicitly state secret values were not reviewed.
 
-### Runtime mutation creep
+### Runtime-adjacent management creep
 
-Threat: AgentOps scripts start managing containers, gateways, sessions, cron, state DB, or Hermes runtime dispatch.
+Threat: Health, deployment, repair, gateway, cron, container, systemd, or session-related work is added implicitly through validators, plans, locks, or apply code without a separate design and approval model.
 
 Mitigations:
 
-- hard boundary in README/PROJECT_DESIGN/SAFETY_INVARIANTS;
-- CI guards forbidden runtime files;
-- future runtime-adjacent changes require explicit design and attack review.
+- current scripts must not mutate runtime state;
+- future runtime-adjacent management requires explicit design/ADR;
+- start read-only where possible;
+- require approval for service-affecting operations;
+- do not treat runtime state as governance authority;
+- do not bypass Hermes provider resolution, tool dispatch, or session handling.
 
 ### Business orchestration creep
 
@@ -160,4 +164,5 @@ Mitigations:
 - Current lock checker does not acquire or release locks.
 - Current rollback and audit records are not implemented.
 - Ruleset configuration is external to Git; repository docs must be updated when it changes.
+- Future runtime-adjacent management requires separate design before implementation.
 - A future apply implementation will need sandboxing and recovery tests beyond current read-only validators.
