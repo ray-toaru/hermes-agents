@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""Run a sandboxed apply dry-run for an AgentOps change.
+
+This command is intentionally not real apply. It validates the change with the
+existing strict read-only gates, copies the target managed profile into a
+throwaway temporary directory, applies the patch inside that sandbox only, and
+emits an evidence report. It never mutates managed profiles in the source
+repository, acquires/releases real locks, creates rollback points, reads secrets,
+or touches runtime state.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import shutil
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_yaml(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def hash_tree(path: Path) -> str:
+    digest = hashlib.sha256()
+    if not path.exists():
+        digest.update(b"<missing>")
+        return digest.hexdigest()
+    for file_path in sorted(item for item in path.rglob("*") if item.is_file()):
+        relative = file_path.relative_to(path).as_posix()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(file_path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def run_command(command: list[str], cwd: Path, *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, cwd=cwd, input=input_text, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+
+
+def verify_change(root: Path, change_id: str) -> subprocess.CompletedProcess[str]:
+    tool = DEFAULT_ROOT / "scripts" / "hermes-agentops"
+    return run_command(
+        [
+            sys.executable,
+            str(tool),
+            "--root",
+            str(root),
+            "changes",
+            "verify",
+            change_id,
+            "--check-git-clean",
+            "--check-patch-applicable",
+        ],
+        root,
+    )
+
+
+def init_sandbox_git(sandbox: Path) -> None:
+    for command in (
+        ["git", "init"],
+        ["git", "config", "user.email", "sandbox@example.local"],
+        ["git", "config", "user.name", "sandbox"],
+        ["git", "add", "profiles"],
+        ["git", "commit", "-m", "sandbox baseline"],
+    ):
+        process = run_command(command, sandbox)
+        if process.returncode != 0:
+            raise RuntimeError(process.stderr.strip() or process.stdout.strip() or f"command failed: {command}")
+
+
+def build_report(
+    *,
+    change_id: str,
+    agent: str | None,
+    validation: subprocess.CompletedProcess[str],
+    source_profile_hash_before: str | None,
+    source_profile_hash_after: str | None,
+    sandbox_profile_hash_after: str | None,
+    patch_check: subprocess.CompletedProcess[str] | None,
+    patch_apply: subprocess.CompletedProcess[str] | None,
+    sandbox_diff_hash: str | None,
+    error: str | None,
+) -> dict[str, Any]:
+    validation_passed = validation.returncode == 0
+    patch_check_passed = patch_check is not None and patch_check.returncode == 0
+    patch_applied = patch_apply is not None and patch_apply.returncode == 0
+    source_unchanged = source_profile_hash_before is not None and source_profile_hash_before == source_profile_hash_after
+    status = "sandbox_applied" if validation_passed and patch_check_passed and patch_applied and source_unchanged else "failed_closed"
+    return {
+        "schema_version": 1,
+        "generated_at": utc_now_iso(),
+        "generated_by": "sandbox-apply-dry-run",
+        "change_id": change_id,
+        "agent": agent or "<unknown>",
+        "mutation_enabled": False,
+        "apply_authorized": False,
+        "status": status,
+        "sandbox_only": True,
+        "source_profile_hash_before": source_profile_hash_before,
+        "source_profile_hash_after": source_profile_hash_after,
+        "source_profile_unchanged": source_unchanged,
+        "sandbox_profile_hash_after": sandbox_profile_hash_after,
+        "sandbox_diff_sha256": sandbox_diff_hash,
+        "checks": {
+            "strict_change_verify": validation_passed,
+            "sandbox_patch_check": patch_check_passed,
+            "sandbox_patch_applied": patch_applied,
+        },
+        "boundaries": {
+            "does_not_enable_apply": True,
+            "does_not_mutate_source_profiles": True,
+            "does_not_acquire_or_release_locks": True,
+            "does_not_create_rollback_points": True,
+            "does_not_execute_rollback": True,
+            "does_not_read_secret_values": True,
+            "does_not_mutate_runtime_state": True,
+            "does_not_orchestrate_business_tasks": True,
+        },
+        "error": error,
+    }
+
+
+def run_dry_run(root: Path, change_id: str) -> tuple[int, dict[str, Any]]:
+    validation = verify_change(root, change_id)
+    agent: str | None = None
+    source_profile_hash_before: str | None = None
+    source_profile_hash_after: str | None = None
+    sandbox_profile_hash_after: str | None = None
+    patch_check: subprocess.CompletedProcess[str] | None = None
+    patch_apply: subprocess.CompletedProcess[str] | None = None
+    sandbox_diff_hash: str | None = None
+    error: str | None = None
+
+    try:
+        proposal_path = root / "changes" / change_id / "proposal.yaml"
+        diff_path = root / "changes" / change_id / "diff.patch"
+        proposal = load_yaml(proposal_path)
+        if not isinstance(proposal, dict):
+            raise RuntimeError("proposal must be a mapping")
+        agent_value = proposal.get("agent")
+        if not isinstance(agent_value, str) or not agent_value:
+            raise RuntimeError("proposal.agent must be a non-empty string")
+        agent = agent_value
+        source_profile = root / "profiles" / agent
+        source_profile_hash_before = hash_tree(source_profile)
+
+        if validation.returncode != 0:
+            error = (validation.stdout + validation.stderr).strip() or "strict change verification failed"
+            source_profile_hash_after = hash_tree(source_profile)
+            return 2, build_report(
+                change_id=change_id,
+                agent=agent,
+                validation=validation,
+                source_profile_hash_before=source_profile_hash_before,
+                source_profile_hash_after=source_profile_hash_after,
+                sandbox_profile_hash_after=sandbox_profile_hash_after,
+                patch_check=patch_check,
+                patch_apply=patch_apply,
+                sandbox_diff_hash=sandbox_diff_hash,
+                error=error,
+            )
+
+        diff_text = diff_path.read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory(prefix="hermes-agentops-dry-run-") as tmpdir:
+            sandbox = Path(tmpdir)
+            sandbox_profile = sandbox / "profiles" / agent
+            shutil.copytree(source_profile, sandbox_profile)
+            init_sandbox_git(sandbox)
+            patch_check = run_command(["git", "apply", "--check"], sandbox, input_text=diff_text)
+            if patch_check.returncode == 0:
+                patch_apply = run_command(["git", "apply"], sandbox, input_text=diff_text)
+                sandbox_profile_hash_after = hash_tree(sandbox_profile)
+                diff_process = run_command(["git", "diff", "--", f"profiles/{agent}"], sandbox)
+                sandbox_diff_hash = hashlib.sha256(diff_process.stdout.encode("utf-8")).hexdigest() if diff_process.returncode == 0 else None
+            else:
+                error = (patch_check.stdout + patch_check.stderr).strip() or "sandbox patch check failed"
+        source_profile_hash_after = hash_tree(source_profile)
+    except Exception as exc:
+        error = str(exc)
+        if agent:
+            source_profile_hash_after = hash_tree(root / "profiles" / agent)
+    report = build_report(
+        change_id=change_id,
+        agent=agent,
+        validation=validation,
+        source_profile_hash_before=source_profile_hash_before,
+        source_profile_hash_after=source_profile_hash_after,
+        sandbox_profile_hash_after=sandbox_profile_hash_after,
+        patch_check=patch_check,
+        patch_apply=patch_apply,
+        sandbox_diff_hash=sandbox_diff_hash,
+        error=error,
+    )
+    return (0 if report["status"] == "sandbox_applied" else 2), report
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="sandbox-apply-dry-run")
+    parser.add_argument("change_id")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    code, report = run_dry_run(Path(args.root).resolve(), args.change_id)
+    print(yaml.safe_dump(report, sort_keys=False), end="")
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
