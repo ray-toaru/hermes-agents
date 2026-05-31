@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/apply-readiness-report.schema.json",
+  "title": "Hermes AgentOps Apply Readiness Evidence Report",
+  "description": "A read-only aggregate evidence report for future apply readiness. This schema does not authorize or perform apply.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "readiness_report_id",
+    "change_id",
+    "agent",
+    "generated_at",
+    "generated_by",
+    "mutation_enabled",
+    "apply_authorized",
+    "status",
+    "gate_count",
+    "blocking_count",
+    "gates",
+    "boundaries",
+    "summary"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "readiness_report_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_readiness$"},
+    "change_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}$"},
+    "agent": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "generated_by": {"type": "string", "minLength": 1},
+    "mutation_enabled": {"type": "boolean", "const": false},
+    "apply_authorized": {"type": "boolean", "const": false},
+    "status": {"type": "string", "enum": ["evidence_complete_not_authorized", "incomplete", "blocked", "invalid"]},
+    "gate_count": {"type": "integer", "minimum": 0},
+    "blocking_count": {"type": "integer", "minimum": 0},
+    "gates": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "phase", "required_before_apply", "status", "blocking", "evidence_path", "evidence_sha256", "note"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$"},
+          "phase": {"type": "string", "enum": ["pre_apply", "future_apply", "post_apply"]},
+          "required_before_apply": {"type": "boolean"},
+          "status": {"type": "string", "enum": ["present", "missing", "blocked", "future_only", "invalid"]},
+          "blocking": {"type": "boolean"},
+          "evidence_path": {"type": "string", "minLength": 1},
+          "evidence_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+          "note": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "report_is_read_only",
+        "does_not_authorize_apply",
+        "does_not_acquire_or_release_locks",
+        "does_not_mutate_profiles_or_runtime",
+        "does_not_read_secret_values",
+        "does_not_execute_rollback",
+        "does_not_orchestrate_business_tasks"
+      ],
+      "properties": {
+        "report_is_read_only": {"type": "boolean", "const": true},
+        "does_not_authorize_apply": {"type": "boolean", "const": true},
+        "does_not_acquire_or_release_locks": {"type": "boolean", "const": true},
+        "does_not_mutate_profiles_or_runtime": {"type": "boolean", "const": true},
+        "does_not_read_secret_values": {"type": "boolean", "const": true},
+        "does_not_execute_rollback": {"type": "boolean", "const": true},
+        "does_not_orchestrate_business_tasks": {"type": "boolean", "const": true}
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["human_review_required", "note"],
+      "properties": {
+        "human_review_required": {"type": "boolean", "const": true},
+        "note": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

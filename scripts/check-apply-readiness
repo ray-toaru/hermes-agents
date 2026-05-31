@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Validate apply readiness evidence reports.
+
+This checker is intentionally read-only. It validates aggregate evidence report
+shape and consistency. It never authorizes apply, acquires locks, mutates
+profiles/runtime state, reads secrets, executes rollback, or orchestrates
+business tasks.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+REQUIRED_PRE_APPLY_GATES = {"change_verify", "approval_identity", "pre_apply_plan", "apply_lock_analysis"}
+
+
+def load_yaml(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def agent_from_change_id(change_id: str) -> str | None:
+    parts = change_id.split("_")
+    return parts[1] if len(parts) == 3 else None
+
+
+def validate_report(root: Path, report: Any, path: Path, validator: jsonschema.Draft202012Validator, *, require_evidence_files: bool) -> list[str]:
+    errors: list[str] = []
+    for error in sorted(validator.iter_errors(report), key=lambda item: list(item.path)):
+        location = ".".join(str(part) for part in error.path) or "<root>"
+        errors.append(f"{path}: {location}: {error.message}")
+    if not isinstance(report, dict):
+        return errors
+
+    if report.get("mutation_enabled") is not False:
+        errors.append(f"{path}: mutation_enabled must remain false")
+    if report.get("apply_authorized") is not False:
+        errors.append(f"{path}: apply_authorized must remain false")
+
+    change_id = report.get("change_id")
+    if isinstance(change_id, str):
+        if report.get("readiness_report_id") != f"{change_id}_readiness":
+            errors.append(f"{path}: readiness_report_id must equal change_id + '_readiness'")
+        expected_agent = agent_from_change_id(change_id)
+        if expected_agent and report.get("agent") != expected_agent:
+            errors.append(f"{path}: agent must match the agent segment in change_id")
+
+    gates = report.get("gates") if isinstance(report.get("gates"), list) else []
+    blocking_count = len([gate for gate in gates if isinstance(gate, dict) and gate.get("blocking") is True])
+    if report.get("gate_count") != len(gates):
+        errors.append(f"{path}: gate_count must equal number of gates")
+    if report.get("blocking_count") != blocking_count:
+        errors.append(f"{path}: blocking_count must equal number of blocking gates")
+
+    gate_names = {gate.get("name") for gate in gates if isinstance(gate, dict)}
+    missing_required = sorted(REQUIRED_PRE_APPLY_GATES - gate_names)
+    if missing_required:
+        errors.append(f"{path}: missing required pre-apply gates {missing_required}")
+
+    for index, gate in enumerate(gates):
+        if not isinstance(gate, dict):
+            continue
+        label = f"{path}: gates[{index}]"
+        name = gate.get("name")
+        status = gate.get("status")
+        blocking = gate.get("blocking")
+        required_before_apply = gate.get("required_before_apply")
+        phase = gate.get("phase")
+        if required_before_apply is True and phase != "pre_apply":
+            errors.append(f"{label}: gates required before apply must be pre_apply phase")
+        if required_before_apply is True and status != "present":
+            if blocking is not True:
+                errors.append(f"{label}: missing/blocked required gate must be blocking")
+        if status == "blocked" and blocking is not True:
+            errors.append(f"{label}: blocked status must be blocking")
+        if name == "post_apply_validation" and required_before_apply is True:
+            errors.append(f"{label}: post_apply_validation cannot be required before apply")
+        evidence_path = gate.get("evidence_path")
+        evidence_hash = gate.get("evidence_sha256")
+        if require_evidence_files and required_before_apply is True and isinstance(evidence_path, str):
+            file_path = root / evidence_path
+            if not file_path.exists():
+                errors.append(f"{label}: required evidence file is missing: {evidence_path}")
+            elif evidence_hash != sha256_file(file_path):
+                errors.append(f"{label}: evidence_sha256 does not match {evidence_path}")
+
+    status = report.get("status")
+    if status == "evidence_complete_not_authorized" and blocking_count:
+        errors.append(f"{path}: complete evidence status cannot have blocking gates")
+    if status == "blocked" and blocking_count == 0:
+        errors.append(f"{path}: blocked status requires at least one blocking gate")
+    if status == "incomplete" and all(isinstance(gate, dict) and gate.get("status") == "present" for gate in gates if gate.get("required_before_apply") is True):
+        errors.append(f"{path}: incomplete status requires missing or invalid required pre-apply evidence")
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="check-apply-readiness")
+    parser.add_argument("record_paths", nargs="*")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--require-evidence-files", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    default_record = root / "docs" / "examples" / "apply-readiness-report.example.yaml"
+    record_paths = [Path(value) for value in args.record_paths] if args.record_paths else [default_record]
+    schema = load_json(root / "schemas" / "apply-readiness-report.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    errors: list[str] = []
+    for path in record_paths:
+        errors.extend(validate_report(root, load_yaml(path), path, validator, require_evidence_files=args.require_evidence_files))
+    if errors:
+        print("apply readiness report validation failed:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    print("apply readiness report validation passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
