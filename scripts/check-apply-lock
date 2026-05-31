@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""Validate apply lock examples.
+
+This script is intentionally read-only. It validates lock records against
+schemas/apply-lock.schema.json and never acquires, releases, or mutates locks.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+SCHEMA = ROOT / "schemas" / "apply-lock.schema.json"
+DEFAULT_LOCK = ROOT / "docs" / "examples" / "apply-lock.example.yaml"
+
+
+def load_yaml(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def parse_date_time(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def validate_lock(lock: Any, path: Path, validator: jsonschema.Draft202012Validator) -> list[str]:
+    errors: list[str] = []
+    for error in sorted(validator.iter_errors(lock), key=lambda item: list(item.path)):
+        location = ".".join(str(part) for part in error.path) or "<root>"
+        errors.append(f"{path}: {location}: {error.message}")
+    if not isinstance(lock, dict):
+        return errors
+    if lock.get("mutation_enabled") is not False:
+        errors.append(f"{path}: mutation_enabled must remain false")
+    created_at = lock.get("created_at")
+    expires_at = lock.get("expires_at")
+    if isinstance(created_at, str) and isinstance(expires_at, str):
+        try:
+            if parse_date_time(expires_at) <= parse_date_time(created_at):
+                errors.append(f"{path}: expires_at must be after created_at")
+        except ValueError as exc:
+            errors.append(f"{path}: invalid timestamp ordering check: {exc}")
+    if isinstance(lock.get("lock_id"), str) and isinstance(lock.get("change_id"), str):
+        expected_prefix = f"{lock['change_id']}_lock"
+        if lock["lock_id"] != expected_prefix:
+            errors.append(f"{path}: lock_id must equal change_id + '_lock'")
+    return errors
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(argv or sys.argv[1:])
+    lock_paths = [Path(value) for value in argv] if argv else [DEFAULT_LOCK]
+    schema = load_json(SCHEMA)
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+
+    errors: list[str] = []
+    for path in lock_paths:
+        errors.extend(validate_lock(load_yaml(path), path, validator))
+
+    if errors:
+        print("apply lock validation failed:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+
+    print("apply lock validation passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

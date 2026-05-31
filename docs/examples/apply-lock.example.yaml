@@ -1,0 +1,17 @@
+schema_version: 1
+lock_id: "20260530T000000Z_agentops_aaaaaaaaaa_lock"
+change_id: "20260530T000000Z_agentops_aaaaaaaaaa"
+agent: agentops
+scope: repository
+mode: exclusive
+status: active
+created_at: "2026-05-30T00:00:00Z"
+created_by: operator
+expires_at: "2026-05-30T00:15:00Z"
+base_commit: "0000000000000000000000000000000000000000"
+pre_apply_plan_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+mutation_enabled: false
+recovery:
+  manual_review_required: true
+  stale_lock_action: inspect_before_release
+  note: Future stale locks must be inspected before release so evidence is not erased.
