@@ -11,7 +11,8 @@ Implemented capabilities are intentionally limited to:
 - strict dry-run gates for clean worktree and patch applicability;
 - canonical pre-apply plan governance-record generation;
 - canonical apply-lock governance-record generation;
-- read-only validators for rollback point, audit record, approval identity, post-apply validation, apply-lock analysis, and apply-readiness reports.
+- read-only validators for rollback point, audit record, approval identity, post-apply validation, apply-lock analysis, and apply-readiness reports;
+- sandboxed apply dry-run that applies patches only inside temporary sandboxes and leaves source profiles unchanged.
 
 `apply` remains disabled. Real locks, profile mutation, rollback execution, runtime management, secret reading, and business orchestration remain out of scope.
 
@@ -71,7 +72,9 @@ Baseline ADRs:
 
 ### P4: Sandboxed apply dry-run only
 
-After P3, add sandboxed dry-run integration tests. They may create temporary repositories, but must not mutate managed repository profiles or runtime state.
+Status: implemented as a standalone sandbox dry-run command. It does not enable `hermes-agentops apply`.
+
+Sandboxed dry-run may create temporary repositories and apply candidate patches inside those temporary repositories only. It must not mutate managed repository profiles or runtime state.
 
 ### P5: Explicit non-default mutation command
 
