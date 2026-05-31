@@ -26,7 +26,7 @@ A structurally valid, hash-bound rejection exists.
 
 Any required record is malformed, mismatched, hash-invalid, duplicated, path-invalid, policy-invalid, or otherwise untrusted.
 
-## Pre-Apply States
+## Current Evidence States
 
 ### verified
 
@@ -51,6 +51,42 @@ This is not lock acquisition.
 A constrained `changes/<change_id>/apply-lock.yaml` governance record was created after validating the canonical pre-apply plan, matching the plan base commit to current `HEAD`, and checking for existing blocking lock records.
 
 This is not apply mutation, real lock acquisition, or lock release.
+
+### lock_analysis_clear
+
+A read-only apply-lock analysis report indicates no blocking lock evidence.
+
+This is not lock acquisition or lock release.
+
+### rollback_point_validated
+
+A rollback-point evidence record validates read-only.
+
+This is not rollback point creation and does not execute rollback.
+
+### audit_record_validated
+
+An audit evidence record validates read-only.
+
+This is not command execution and does not authorize mutation.
+
+### approval_identity_validated
+
+Approval identity evidence validates read-only.
+
+This is not live or cryptographic authentication.
+
+### post_apply_validation_evidence_validated
+
+Post-apply validation evidence validates read-only.
+
+This does not run post-apply validation and cannot be required before apply.
+
+### readiness_report_validated
+
+An apply-readiness evidence report validates and keeps `apply_authorized: false`.
+
+This is not execution authority.
 
 ## Future Mutation States
 
@@ -99,9 +135,15 @@ verified -> apply_ready_verified
 apply_ready_verified -> pre_apply_planned
 pre_apply_planned -> lock_validated
 pre_apply_planned -> apply_lock_recorded
+apply_lock_recorded -> lock_analysis_clear
+approved / verified / apply_ready_verified / pre_apply_planned -> approval_identity_validated
+pre_apply_planned / apply_lock_recorded -> rollback_point_validated
+pre_apply_planned / apply_lock_recorded -> audit_record_validated
+pre_apply_planned / apply_lock_recorded -> post_apply_validation_evidence_validated
+verified / apply_ready_verified / pre_apply_planned / apply_lock_recorded / lock_analysis_clear -> readiness_report_validated
 ```
 
-All current transitions are non-runtime governance transitions.
+All current transitions are non-runtime governance or evidence-validation transitions.
 
 ## Forbidden Current Transitions
 
@@ -114,9 +156,18 @@ lock_validated -> locked
 lock_validated -> applying
 apply_lock_recorded -> locked
 apply_lock_recorded -> applying
+lock_analysis_clear -> locked
+readiness_report_validated -> locked
+readiness_report_validated -> applying
 approval -> execution authority
+approval_identity -> execution authority
 pre_apply_plan -> execution authority
 apply_lock_record -> execution authority
+apply_lock_analysis -> execution authority
+rollback_point -> execution authority
+audit_record -> execution authority
+post_apply_validation_evidence -> execution authority
+readiness_report -> execution authority
 ```
 
 ## Future Apply Transition Sketch
@@ -127,8 +178,11 @@ Future apply must use a linear, fail-closed sequence:
 approved
   -> verified
   -> apply_ready_verified
+  -> approval_identity_validated
   -> pre_apply_planned
   -> apply_lock_recorded
+  -> lock_analysis_clear
+  -> readiness_report_validated
   -> locked
   -> rollback_point_recorded
   -> applying
@@ -161,6 +215,12 @@ A future implementation must abort on first failed gate. It must not continue mu
 | pre_apply_planned | `generate-pre-apply-plan` | current governance write |
 | lock_validated | `check-apply-lock` | current read-only |
 | apply_lock_recorded | `acquire-apply-lock` | current governance write |
+| lock_analysis_clear | `analyze-apply-locks --validate-report` or generated stdout report | current read-only |
+| rollback_point_validated | `check-rollback-point` | current read-only |
+| audit_record_validated | `check-audit-record` | current read-only |
+| approval_identity_validated | `check-approval-identity` | current read-only |
+| post_apply_validation_evidence_validated | `check-post-apply-validation` | current read-only |
+| readiness_report_validated | `check-apply-readiness` | current read-only |
 | locked | future real lock acquisition | future |
 | rollback_point_recorded | future rollback module | future |
 | applying | future apply module | future |

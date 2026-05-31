@@ -4,14 +4,15 @@
 
 This is the project-level design entry point for Hermes AgentOps Manager. It describes the intended system as a whole, not only the current version-specific increments.
 
-As of the current design baseline:
+As of v2.0:
 
 - The repository is public.
 - `main` is governed by repository ruleset / PR / CI / CODEOWNERS discipline.
-- The current implemented direction is pre-apply governance and validation.
-- `apply` remains disabled.
-- Validators and generators are allowed to read repository governance records and write only explicitly documented governance records under `changes/<change_id>/`.
-- No current script may read real secret values, mutate runtime state, mutate managed profiles, or execute business actions.
+- The current implemented direction is repository governance, evidence validation, and bounded governance-record generation.
+- `apply` remains disabled and must remain non-zero until a separately reviewed mutation pipeline exists.
+- Validators and generators may read repository governance records and write only explicitly documented governance records under `changes/<change_id>/`.
+- Current read-only evidence layers include rollback-point validation, audit-record validation, approval-identity evidence validation, post-apply validation evidence validation, apply-lock analysis, and apply-readiness report validation.
+- No current script may read real secret values, mutate runtime state, mutate managed profiles, acquire or release real runtime locks, execute rollback, or execute business actions.
 - Future runtime-adjacent health, deployment, or repair management is allowed only after a separate design/ADR, read-only-first validation, explicit approval gates, and no Hermes runtime bypass.
 
 ## Mission
@@ -56,7 +57,12 @@ AgentOps may:
 - generate non-mutating pre-apply plans;
 - validate apply-lock records without acquiring or releasing locks;
 - create constrained apply-lock governance records after a valid pre-apply plan and no blocking lock evidence;
-- document future rollback, audit, and post-apply requirements;
+- validate rollback-point evidence records without creating rollback points or executing rollback;
+- validate audit records without treating command evidence as execution authority;
+- validate approval-identity evidence without treating YAML records or URLs as authentication authority;
+- validate post-apply validation evidence without executing apply or rollback;
+- analyze repository-wide apply-lock evidence without acquiring, releasing, rewriting, deleting, or repairing locks;
+- validate apply-readiness evidence reports without authorizing apply;
 - enforce repository process through CI guards and GitHub ruleset / CODEOWNERS configuration;
 - propose future health, deployment, or repair management only through explicit design and review.
 
@@ -67,7 +73,7 @@ AgentOps must not:
 - read or display real secret values;
 - bypass Hermes runtime/provider/tooling mechanisms;
 - treat approval records as cryptographic identity proofs;
-- treat pre-apply plans or lock records as execution authority.
+- treat pre-apply plans, lock records, rollback points, audit records, post-apply validation records, or readiness reports as execution authority.
 
 ## Current Implementation Classes
 
@@ -75,27 +81,31 @@ AgentOps must not:
 | --- | --- | --- |
 | Repository governance | Implemented | PR flow, CODEOWNERS, CI guard, ruleset evidence. |
 | Profile declaration | Implemented | Manifest/config/SOUL governance assets. |
-| Policy validation | Implemented | Global forbidden operations and risk thresholds. |
+| Policy validation | Implemented | Global forbidden operations and risk thresholds; invalid policy fails closed. |
 | Change records | Implemented | Proposal, diff, approvals, verify, list/show/diff. |
-| Dry-run gates | Implemented | Optional Git clean and patch applicability checks. |
+| Dry-run gates | Implemented | Optional Git clean and patch applicability checks; strict mode is required before plan generation and any future mutation. |
 | Pre-apply plan schema | Implemented read-only | Schema and example validate the future contract. |
 | Pre-apply plan generation | Implemented governance write | Writes only canonical `changes/<id>/pre-apply-plan.yaml`. |
 | Apply-lock schema/checker | Implemented read-only | Validates lock records; does not acquire or release locks. |
-| Apply-lock record generation | Implemented governance write | Writes canonical `changes/<id>/apply-lock.yaml`; does not release or delete locks. |
+| Apply-lock record generation | Implemented governance write | Writes canonical `changes/<id>/apply-lock.yaml`; does not acquire, release, rewrite, delete, or repair real locks. |
+| Rollback point schema/checker | Implemented read-only | Validates rollback-point evidence; does not create rollback points or execute rollback. |
+| Audit record schema/checker | Implemented read-only | Validates audit evidence; command strings are evidence only and not execution authority. |
+| Approval identity schema/checker | Implemented read-only | Validates identity evidence references; does not authenticate live reviewer permissions. |
+| Post-apply validation schema/checker | Implemented read-only | Validates post-apply validation evidence; does not execute apply or rollback. |
+| Apply-lock analysis | Implemented read-only | Reports blocking lock evidence to stdout only; does not write reports or mutate locks. |
+| Apply-readiness report | Implemented read-only | Aggregates evidence gates; `apply_authorized` remains `false`. |
 | Runtime-adjacent health/deployment/repair management | Not implemented | Future design only; must not bypass Hermes runtime or become business orchestration. |
 | Real lock acquisition/release | Not implemented | Future mutation prerequisite. |
-| Rollback point creation | Not implemented | Future mutation prerequisite. |
-| Audit record capture | Not implemented | Future mutation prerequisite. |
-| Post-apply validation | Not implemented | Future mutation prerequisite. |
-| Apply mutation | Disabled | Must remain non-zero until all gates converge. |
+| Rollback point creation | Not implemented | Future mutation prerequisite distinct from the current read-only checker. |
+| Patch mutation | Disabled | Must remain non-zero until all gates converge. |
 
 ## Design Principles
 
-1. **Fail closed.** Invalid policy, schema, proposal, approval, path, hash, plan, or lock evidence blocks progress.
-2. **Bind records cryptographically where practical.** Diff hashes, plan hashes, base commits, and change IDs prevent record reuse.
+1. **Fail closed.** Invalid policy, schema, proposal, approval, path, hash, plan, lock, rollback, audit, identity, post-apply, analysis, or readiness evidence blocks progress.
+2. **Bind records cryptographically where practical.** Diff hashes, plan hashes, lock hashes, audit hashes, evidence hashes, base commits, and change IDs reduce record reuse risk.
 3. **Separate records from authority.** A valid record is review evidence, not permission to mutate.
 4. **Prefer read-only validators before mutation.** Every future mutation step must first have a schema, example, validator, tests, and attack review.
-5. **Keep governance writes narrow.** Current writes may create governance records under `changes/<change_id>/`; they must not write managed profiles or runtime state.
+5. **Keep governance writes narrow.** Current writes may create explicitly documented governance records under `changes/<change_id>/`; they must not write managed profiles or runtime state.
 6. **Use GitHub enforcement for branch safety.** CI guards detect repository drift, but rulesets / branch protection enforce merge discipline.
 7. **Preserve Hermes runtime boundary.** AgentOps governs repository assets and must not replace Hermes runtime semantics.
 8. **Keep runtime-adjacent management explicit.** Health, deployment, and repair management may evolve only through design-gated, auditable, non-business orchestration paths.
@@ -112,7 +122,8 @@ AgentOps must not:
 8. `docs/THREAT_MODEL.md`
 9. `docs/APPLY_PIPELINE_DESIGN.md`
 10. `docs/OPERATIONS_AND_RECOVERY.md`
-11. `docs/adr/*.md`
+11. `docs/ROADMAP.md`
+12. `docs/adr/*.md`
 
 After that, read the version-specific documents only for detailed history and rationale.
 
