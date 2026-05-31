@@ -95,6 +95,17 @@ def test_apply_readiness_checker_accepts_valid_record(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_apply_readiness_checker_accepts_blocked_required_gate_in_blocked_report(tmp_path: Path) -> None:
+    record = valid_report()
+    record["status"] = "blocked"
+    record["gates"][3]["status"] = "blocked"
+    record["gates"][3]["blocking"] = True
+    record["blocking_count"] = 1
+    path = write_yaml(tmp_path / "readiness.yaml", record)
+    result = run_checker(ROOT, path)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_apply_readiness_checker_rejects_mutation_enabled_true(tmp_path: Path) -> None:
     record = valid_report()
     record["mutation_enabled"] = True
@@ -182,7 +193,7 @@ def test_apply_readiness_checker_rejects_required_gate_marked_future_only(tmp_pa
     result = run_checker(ROOT, path)
     assert result.returncode == 1
     assert "required gate" in result.stdout
-    assert "must be present" in result.stdout
+    assert "pre_apply" in result.stdout
 
 
 def test_apply_readiness_checker_rejects_required_gate_without_hash(tmp_path: Path) -> None:

@@ -50,6 +50,32 @@ def is_safe_relative_path(value: Any) -> bool:
     return not candidate.is_absolute() and ".." not in candidate.parts
 
 
+def validate_required_gate(gate: dict[str, Any], label: str, report_status: Any, errors: list[str]) -> None:
+    if gate.get("phase") != "pre_apply":
+        errors.append(f"{label}: required gate must be pre_apply phase")
+    if gate.get("required_before_apply") is not True:
+        errors.append(f"{label}: required gate must have required_before_apply true")
+    if not isinstance(gate.get("evidence_sha256"), str):
+        errors.append(f"{label}: required gate must have concrete evidence_sha256")
+
+    gate_status = gate.get("status")
+    blocking = gate.get("blocking")
+    if report_status == "evidence_complete_not_authorized":
+        if gate_status != "present":
+            errors.append(f"{label}: required gate must be present")
+        if blocking is not False:
+            errors.append(f"{label}: required present gate must be non-blocking")
+    elif report_status == "blocked":
+        if gate_status == "present" and blocking is not False:
+            errors.append(f"{label}: present required gate must be non-blocking")
+        elif gate_status == "blocked" and blocking is not True:
+            errors.append(f"{label}: blocked required gate must be blocking")
+        elif gate_status not in {"present", "blocked"}:
+            errors.append(f"{label}: required gate must be present or blocked in blocked reports")
+    elif gate_status == "present" and blocking is not False:
+        errors.append(f"{label}: present required gate must be non-blocking")
+
+
 def validate_report(root: Path, report: Any, path: Path, validator: jsonschema.Draft202012Validator, *, require_evidence_files: bool) -> list[str]:
     errors: list[str] = []
     for error in sorted(validator.iter_errors(report), key=lambda item: list(item.path)):
@@ -88,19 +114,9 @@ def validate_report(root: Path, report: Any, path: Path, validator: jsonschema.D
     if missing_required:
         errors.append(f"{path}: missing required pre-apply gates {missing_required}")
 
+    report_status = report.get("status")
     for required_name in sorted(REQUIRED_PRE_APPLY_GATES & set(gate_by_name)):
-        gate = gate_by_name[required_name]
-        label = f"{path}: gate {required_name!r}"
-        if gate.get("phase") != "pre_apply":
-            errors.append(f"{label}: required gate must be pre_apply phase")
-        if gate.get("required_before_apply") is not True:
-            errors.append(f"{label}: required gate must have required_before_apply true")
-        if gate.get("status") != "present":
-            errors.append(f"{label}: required gate must be present")
-        if gate.get("blocking") is not False:
-            errors.append(f"{label}: required present gate must be non-blocking")
-        if not isinstance(gate.get("evidence_sha256"), str):
-            errors.append(f"{label}: required gate must have concrete evidence_sha256")
+        validate_required_gate(gate_by_name[required_name], f"{path}: gate {required_name!r}", report_status, errors)
 
     for index, gate in enumerate(gates):
         if not isinstance(gate, dict):
@@ -132,12 +148,11 @@ def validate_report(root: Path, report: Any, path: Path, validator: jsonschema.D
             elif evidence_hash != sha256_file(file_path):
                 errors.append(f"{label}: evidence_sha256 does not match {evidence_path}")
 
-    status = report.get("status")
-    if status == "evidence_complete_not_authorized" and blocking_count:
+    if report_status == "evidence_complete_not_authorized" and blocking_count:
         errors.append(f"{path}: complete evidence status cannot have blocking gates")
-    if status == "blocked" and blocking_count == 0:
+    if report_status == "blocked" and blocking_count == 0:
         errors.append(f"{path}: blocked status requires at least one blocking gate")
-    if status == "incomplete" and all(isinstance(gate, dict) and gate.get("status") == "present" for gate in gates if gate.get("required_before_apply") is True):
+    if report_status == "incomplete" and all(isinstance(gate, dict) and gate.get("status") == "present" for gate in gates if gate.get("required_before_apply") is True):
         errors.append(f"{path}: incomplete status requires missing or invalid required pre-apply evidence")
     return errors
 
