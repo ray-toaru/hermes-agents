@@ -111,7 +111,7 @@ def test_fixture_verifier_fails_closed_on_duplicate_approver(tmp_path: Path) -> 
     root = prepare_root(tmp_path)
     init_git_profile(root)
     write_change(root)
-    duplicate = run_agentops(root, "changes", "approve", CHANGE_ID, "--approver", "operator")
+    duplicate = run_agentops(root, "changes", "approve", CHANGE_ID, "--approver", "reviewer-1")
     assert duplicate.returncode == 0, duplicate.stdout + duplicate.stderr
 
     result = run_verifier(root)
