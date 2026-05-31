@@ -153,11 +153,28 @@ def build_plan(root: Path, change_id: str, base_commit: str, generated_at: str) 
     }
 
 
+def canonical_output_path(root: Path, change_id: str) -> Path:
+    return root / "changes" / change_id / "pre-apply-plan.yaml"
+
+
+def resolve_output_path(root: Path, change_id: str, raw_output: str | None) -> Path:
+    canonical = canonical_output_path(root, change_id).resolve()
+    if raw_output is None:
+        return canonical
+    candidate = Path(raw_output)
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    candidate = candidate.resolve()
+    if candidate != canonical:
+        raise RuntimeError(f"output must be exactly {canonical.relative_to(root)}")
+    return candidate
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="generate-pre-apply-plan")
     parser.add_argument("change_id")
     parser.add_argument("--root", default=".")
-    parser.add_argument("--output", help="Output path. Defaults to changes/<change_id>/pre-apply-plan.yaml")
+    parser.add_argument("--output", help="Optional explicit output path; must equal changes/<change_id>/pre-apply-plan.yaml")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args(argv)
 
@@ -165,9 +182,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = Path(args.root).resolve()
-    output = Path(args.output) if args.output else root / "changes" / args.change_id / "pre-apply-plan.yaml"
-    if not output.is_absolute():
-        output = root / output
+    try:
+        output = resolve_output_path(root, args.change_id, args.output)
+    except Exception as exc:
+        print(f"[CRIT] preapply.output: {exc}")
+        return 2
     if output.exists() and not args.overwrite:
         print(f"[CRIT] preapply.output: already exists {output}")
         return 2

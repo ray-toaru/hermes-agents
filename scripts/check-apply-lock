@@ -7,6 +7,8 @@ schemas/apply-lock.schema.json and never acquires, releases, or mutates locks.
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
 import sys
 from datetime import datetime
@@ -35,7 +37,22 @@ def parse_date_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def validate_lock(lock: Any, path: Path, validator: jsonschema.Draft202012Validator) -> list[str]:
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def agent_from_change_id(change_id: str) -> str | None:
+    parts = change_id.split("_")
+    return parts[1] if len(parts) == 3 else None
+
+
+def validate_lock(
+    lock: Any,
+    path: Path,
+    validator: jsonschema.Draft202012Validator,
+    *,
+    require_plan_file: bool,
+) -> list[str]:
     errors: list[str] = []
     for error in sorted(validator.iter_errors(lock), key=lambda item: list(item.path)):
         location = ".".join(str(part) for part in error.path) or "<root>"
@@ -52,23 +69,42 @@ def validate_lock(lock: Any, path: Path, validator: jsonschema.Draft202012Valida
                 errors.append(f"{path}: expires_at must be after created_at")
         except ValueError as exc:
             errors.append(f"{path}: invalid timestamp ordering check: {exc}")
-    if isinstance(lock.get("lock_id"), str) and isinstance(lock.get("change_id"), str):
-        expected_prefix = f"{lock['change_id']}_lock"
-        if lock["lock_id"] != expected_prefix:
+    change_id = lock.get("change_id")
+    if isinstance(lock.get("lock_id"), str) and isinstance(change_id, str):
+        expected_lock_id = f"{change_id}_lock"
+        if lock["lock_id"] != expected_lock_id:
             errors.append(f"{path}: lock_id must equal change_id + '_lock'")
+    if isinstance(change_id, str):
+        expected_agent = agent_from_change_id(change_id)
+        if expected_agent and lock.get("agent") != expected_agent:
+            errors.append(f"{path}: agent must match the agent segment in change_id")
+        plan_path = ROOT / "changes" / change_id / "pre-apply-plan.yaml"
+        if plan_path.exists():
+            expected_hash = sha256_file(plan_path)
+            if lock.get("pre_apply_plan_sha256") != expected_hash:
+                errors.append(f"{path}: pre_apply_plan_sha256 does not match {plan_path.relative_to(ROOT)}")
+        elif require_plan_file:
+            errors.append(f"{path}: required pre-apply plan file is missing: {plan_path.relative_to(ROOT)}")
     return errors
 
 
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="check-apply-lock")
+    parser.add_argument("lock_paths", nargs="*")
+    parser.add_argument("--require-plan-file", action="store_true")
+    return parser.parse_args(argv)
+
+
 def main(argv: list[str] | None = None) -> int:
-    argv = list(argv or sys.argv[1:])
-    lock_paths = [Path(value) for value in argv] if argv else [DEFAULT_LOCK]
+    args = parse_args(argv)
+    lock_paths = [Path(value) for value in args.lock_paths] if args.lock_paths else [DEFAULT_LOCK]
     schema = load_json(SCHEMA)
     jsonschema.Draft202012Validator.check_schema(schema)
     validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
 
     errors: list[str] = []
     for path in lock_paths:
-        errors.extend(validate_lock(load_yaml(path), path, validator))
+        errors.extend(validate_lock(load_yaml(path), path, validator, require_plan_file=args.require_plan_file))
 
     if errors:
         print("apply lock validation failed:")
