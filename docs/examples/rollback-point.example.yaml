@@ -1,0 +1,17 @@
+schema_version: 1
+rollback_point_id: "20260530T000000Z_agentops_aaaaaaaaaa_rollback"
+change_id: "20260530T000000Z_agentops_aaaaaaaaaa"
+agent: agentops
+created_at: "2026-05-30T00:00:00Z"
+created_by: operator
+mutation_enabled: false
+strategy: git_first
+pre_apply_commit: "0000000000000000000000000000000000000000"
+current_head: "0000000000000000000000000000000000000000"
+pre_apply_plan_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+apply_lock_sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+recovery:
+  manual_review_required: true
+  rollback_command: git revert or reset by operator
+  post_rollback_validation_required: true
+  note: Future rollback must be operator-reviewed and followed by validation.

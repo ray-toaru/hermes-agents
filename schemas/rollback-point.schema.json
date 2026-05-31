@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/rollback-point.schema.json",
+  "title": "Hermes AgentOps Rollback Point",
+  "description": "A design-only governance record for a future pre-mutation rollback point. This schema does not enable apply or perform rollback.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "rollback_point_id",
+    "change_id",
+    "agent",
+    "created_at",
+    "created_by",
+    "mutation_enabled",
+    "strategy",
+    "pre_apply_commit",
+    "current_head",
+    "pre_apply_plan_sha256",
+    "apply_lock_sha256",
+    "recovery"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "rollback_point_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_rollback$"},
+    "change_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}$"},
+    "agent": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "created_by": {"type": "string", "minLength": 1},
+    "mutation_enabled": {"type": "boolean", "const": false},
+    "strategy": {"type": "string", "enum": ["git_first"]},
+    "pre_apply_commit": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+    "current_head": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+    "pre_apply_plan_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "apply_lock_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manual_review_required", "rollback_command", "post_rollback_validation_required", "note"],
+      "properties": {
+        "manual_review_required": {"type": "boolean", "const": true},
+        "rollback_command": {"type": "string", "enum": ["git revert or reset by operator"]},
+        "post_rollback_validation_required": {"type": "boolean", "const": true},
+        "note": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

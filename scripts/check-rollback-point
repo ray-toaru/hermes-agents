@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Validate rollback point examples.
+
+This script is intentionally read-only. It validates rollback-point records and
+never creates rollback points, applies patches, reverts commits, or mutates files.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_yaml(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def agent_from_change_id(change_id: str) -> str | None:
+    parts = change_id.split("_")
+    return parts[1] if len(parts) == 3 else None
+
+
+def validate_record(root: Path, record: Any, path: Path, validator: jsonschema.Draft202012Validator, *, require_evidence_files: bool) -> list[str]:
+    errors: list[str] = []
+    for error in sorted(validator.iter_errors(record), key=lambda item: list(item.path)):
+        location = ".".join(str(part) for part in error.path) or "<root>"
+        errors.append(f"{path}: {location}: {error.message}")
+    if not isinstance(record, dict):
+        return errors
+    if record.get("mutation_enabled") is not False:
+        errors.append(f"{path}: mutation_enabled must remain false")
+    change_id = record.get("change_id")
+    if isinstance(change_id, str):
+        if record.get("rollback_point_id") != f"{change_id}_rollback":
+            errors.append(f"{path}: rollback_point_id must equal change_id + '_rollback'")
+        expected_agent = agent_from_change_id(change_id)
+        if expected_agent and record.get("agent") != expected_agent:
+            errors.append(f"{path}: agent must match the agent segment in change_id")
+        plan_path = root / "changes" / change_id / "pre-apply-plan.yaml"
+        lock_path = root / "changes" / change_id / "apply-lock.yaml"
+        if plan_path.exists():
+            expected_hash = sha256_file(plan_path)
+            if record.get("pre_apply_plan_sha256") != expected_hash:
+                errors.append(f"{path}: pre_apply_plan_sha256 does not match {plan_path.relative_to(root)}")
+        elif require_evidence_files:
+            errors.append(f"{path}: required pre-apply plan file is missing: {plan_path.relative_to(root)}")
+        if lock_path.exists():
+            expected_hash = sha256_file(lock_path)
+            if record.get("apply_lock_sha256") != expected_hash:
+                errors.append(f"{path}: apply_lock_sha256 does not match {lock_path.relative_to(root)}")
+        elif require_evidence_files:
+            errors.append(f"{path}: required apply lock file is missing: {lock_path.relative_to(root)}")
+    if record.get("pre_apply_commit") != record.get("current_head"):
+        errors.append(f"{path}: pre_apply_commit must equal current_head in the rollback point contract")
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="check-rollback-point")
+    parser.add_argument("record_paths", nargs="*")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--require-evidence-files", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    default_record = root / "docs" / "examples" / "rollback-point.example.yaml"
+    record_paths = [Path(value) for value in args.record_paths] if args.record_paths else [default_record]
+    schema = load_json(root / "schemas" / "rollback-point.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    errors: list[str] = []
+    for path in record_paths:
+        errors.extend(validate_record(root, load_yaml(path), path, validator, require_evidence_files=args.require_evidence_files))
+    if errors:
+        print("rollback point validation failed:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    print("rollback point validation passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
