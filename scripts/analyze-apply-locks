@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""Analyze apply-lock governance records.
+
+This script is intentionally read-only. It scans lock records and reports whether
+locks are blocking, stale, expired, released, or invalid. It never acquires,
+releases, rewrites, deletes, or repairs locks and never enables apply.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+BLOCKING_STATUSES = {"active", "stale", "recovery_required"}
+
+
+def load_yaml(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def parse_date_time(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def agent_from_change_id(change_id: str) -> str | None:
+    parts = change_id.split("_")
+    return parts[1] if len(parts) == 3 else None
+
+
+def iso_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def validate_report(root: Path, report: Any, path: Path, validator: jsonschema.Draft202012Validator) -> list[str]:
+    errors: list[str] = []
+    for error in sorted(validator.iter_errors(report), key=lambda item: list(item.path)):
+        location = ".".join(str(part) for part in error.path) or "<root>"
+        errors.append(f"{path}: {location}: {error.message}")
+    if not isinstance(report, dict):
+        return errors
+    if report.get("mutation_enabled") is not False:
+        errors.append(f"{path}: mutation_enabled must remain false")
+    locks = report.get("locks") if isinstance(report.get("locks"), list) else []
+    blocking_count = len([lock for lock in locks if isinstance(lock, dict) and lock.get("blocking") is True])
+    if report.get("lock_count") != len(locks):
+        errors.append(f"{path}: lock_count must equal number of locks")
+    if report.get("blocking_count") != blocking_count:
+        errors.append(f"{path}: blocking_count must equal number of blocking locks")
+    summary = report.get("summary") or {}
+    if isinstance(summary, dict) and summary.get("has_blocking_locks") != (blocking_count > 0):
+        errors.append(f"{path}: summary.has_blocking_locks does not match blocking_count")
+    return errors
+
+
+def classify_lock(root: Path, path: Path, lock_schema_validator: jsonschema.Draft202012Validator, now: datetime) -> dict[str, Any]:
+    relative_path = path.relative_to(root).as_posix()
+    try:
+        lock = load_yaml(path)
+    except Exception as exc:
+        return {
+            "path": relative_path,
+            "change_id": "<unknown>",
+            "agent": "<unknown>",
+            "status": "invalid",
+            "effective_status": "invalid",
+            "blocking": True,
+            "reason": f"lock record cannot be parsed: {exc}",
+        }
+
+    schema_errors = list(lock_schema_validator.iter_errors(lock))
+    if schema_errors or not isinstance(lock, dict):
+        return {
+            "path": relative_path,
+            "change_id": str(lock.get("change_id", "<unknown>")) if isinstance(lock, dict) else "<unknown>",
+            "agent": str(lock.get("agent", "<unknown>")) if isinstance(lock, dict) else "<unknown>",
+            "status": str(lock.get("status", "invalid")) if isinstance(lock, dict) else "invalid",
+            "effective_status": "invalid",
+            "blocking": True,
+            "reason": "invalid lock record requires manual review",
+        }
+
+    change_id = str(lock.get("change_id"))
+    agent = str(lock.get("agent"))
+    status = str(lock.get("status"))
+    effective_status = status
+    blocking = status in BLOCKING_STATUSES
+    reason = f"{status} lock blocks future apply attempts" if blocking else "released lock is non-blocking"
+
+    expected_agent = agent_from_change_id(change_id)
+    if expected_agent and agent != expected_agent:
+        return {
+            "path": relative_path,
+            "change_id": change_id,
+            "agent": agent,
+            "status": status,
+            "effective_status": "invalid",
+            "blocking": True,
+            "reason": "agent does not match change_id segment; manual review required",
+        }
+
+    if status == "active":
+        try:
+            if parse_date_time(str(lock.get("expires_at"))) <= now:
+                effective_status = "expired_active"
+                blocking = True
+                reason = "active lock is expired but still blocking until manual review"
+            else:
+                reason = "active exclusive repository lock blocks future apply attempts"
+        except Exception as exc:
+            effective_status = "invalid"
+            blocking = True
+            reason = f"active lock has invalid expires_at: {exc}"
+    elif status == "released":
+        blocking = False
+        reason = "released lock is non-blocking"
+    elif status == "stale":
+        blocking = True
+        reason = "stale lock requires manual inspection before release"
+    elif status == "recovery_required":
+        blocking = True
+        reason = "recovery_required lock blocks until recovery review completes"
+
+    return {
+        "path": relative_path,
+        "change_id": change_id,
+        "agent": agent,
+        "status": status,
+        "effective_status": effective_status,
+        "blocking": blocking,
+        "reason": reason,
+    }
+
+
+def build_report(root: Path, now: datetime, generated_at: str) -> dict[str, Any]:
+    lock_schema = load_json(root / "schemas" / "apply-lock.schema.json")
+    lock_schema_validator = jsonschema.Draft202012Validator(lock_schema, format_checker=jsonschema.FormatChecker())
+    lock_paths = sorted((root / "changes").glob("*/apply-lock.yaml")) if (root / "changes").exists() else []
+    locks = [classify_lock(root, path, lock_schema_validator, now) for path in lock_paths]
+    blocking_count = len([lock for lock in locks if lock["blocking"]])
+    return {
+        "schema_version": 1,
+        "generated_at": generated_at,
+        "generated_by": "analyze-apply-locks",
+        "mutation_enabled": False,
+        "lock_count": len(locks),
+        "blocking_count": blocking_count,
+        "locks": locks,
+        "summary": {
+            "has_blocking_locks": blocking_count > 0,
+            "manual_review_required": True,
+            "note": "This report is read-only evidence. It does not release, rewrite, or repair locks.",
+        },
+    }
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="analyze-apply-locks")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--now", default=None, help="RFC3339 timestamp used for deterministic expiry analysis")
+    parser.add_argument("--output", default=None)
+    parser.add_argument("--validate-report", action="store_true")
+    parser.add_argument("record_paths", nargs="*")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    report_schema = load_json(root / "schemas" / "apply-lock-analysis.schema.json")
+    jsonschema.Draft202012Validator.check_schema(report_schema)
+    report_validator = jsonschema.Draft202012Validator(report_schema, format_checker=jsonschema.FormatChecker())
+
+    if args.validate_report:
+        default_report = root / "docs" / "examples" / "apply-lock-analysis.example.yaml"
+        report_paths = [Path(value) for value in args.record_paths] if args.record_paths else [default_report]
+        errors: list[str] = []
+        for path in report_paths:
+            errors.extend(validate_report(root, load_yaml(path), path, report_validator))
+        if errors:
+            print("apply-lock analysis report validation failed:")
+            for error in errors:
+                print(f"- {error}")
+            return 1
+        print("apply-lock analysis report validation passed")
+        return 0
+
+    generated_at = args.now or iso_now()
+    now = parse_date_time(generated_at)
+    report = build_report(root, now, generated_at)
+    errors = validate_report(root, report, Path("<generated>"), report_validator)
+    if errors:
+        print("generated apply-lock analysis report failed validation:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    text = yaml.safe_dump(report, sort_keys=False)
+    if args.output:
+        Path(args.output).write_text(text, encoding="utf-8")
+    else:
+        print(text, end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
