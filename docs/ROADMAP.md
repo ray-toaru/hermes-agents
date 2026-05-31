@@ -78,7 +78,11 @@ Sandboxed dry-run may create temporary repositories and apply candidate patches 
 
 ### P5: Explicit non-default mutation command
 
-Only after P0-P4 converge, consider an explicit non-default mutation command. It must be separately reviewed and remain fail-closed behind all gates.
+Status: not ready to implement. See `docs/P5_MUTATION_READINESS_REVIEW.md`.
+
+A real mutation command remains blocked until the ADR 0008-0011 prerequisites are implemented and validated as separate fail-closed slices.
+
+Only after those prerequisite slices converge, consider an explicit non-default mutation command. It must be separately reviewed and remain fail-closed behind all gates.
 
 ## Always Out of Scope for This Track
 
