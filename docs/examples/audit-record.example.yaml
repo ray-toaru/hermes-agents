@@ -18,12 +18,16 @@ evidence:
 commands:
   - name: changes_verify
     command: "python scripts/hermes-agentops changes verify 20260530T000000Z_agentops_aaaaaaaaaa --check-git-clean --check-patch-applicable"
+    command_evidence_type: recorded_only
+    command_is_not_execution_authority: true
     exit_code: 0
     status: success
     output_sha256: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
     redacted_summary: Validation completed without reading secrets or mutating runtime state.
   - name: rollback_point_validate
     command: "python scripts/check-rollback-point"
+    command_evidence_type: recorded_only
+    command_is_not_execution_authority: true
     exit_code: 0
     status: success
     output_sha256: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"

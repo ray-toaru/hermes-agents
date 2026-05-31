@@ -61,6 +61,8 @@ def valid_record() -> dict[str, Any]:
             {
                 "name": "changes_verify",
                 "command": f"python scripts/hermes-agentops changes verify {CHANGE_ID} --check-git-clean --check-patch-applicable",
+                "command_evidence_type": "recorded_only",
+                "command_is_not_execution_authority": True,
                 "exit_code": 0,
                 "status": "success",
                 "output_sha256": "d" * 64,
@@ -140,6 +142,24 @@ def test_audit_record_checker_rejects_unsafe_command(tmp_path: Path) -> None:
     result = run_checker(ROOT, path)
     assert result.returncode == 1
     assert "read-only allowlist" in result.stdout
+
+
+def test_audit_record_checker_rejects_command_execution_authority(tmp_path: Path) -> None:
+    record = valid_record()
+    record["commands"][0]["command_is_not_execution_authority"] = False
+    path = write_yaml(tmp_path / "audit.yaml", record)
+    result = run_checker(ROOT, path)
+    assert result.returncode == 1
+    assert "command_is_not_execution_authority" in result.stdout
+
+
+def test_audit_record_checker_rejects_non_recorded_command_evidence(tmp_path: Path) -> None:
+    record = valid_record()
+    record["commands"][0]["command_evidence_type"] = "execution_plan"
+    path = write_yaml(tmp_path / "audit.yaml", record)
+    result = run_checker(ROOT, path)
+    assert result.returncode == 1
+    assert "command_evidence_type" in result.stdout
 
 
 def test_audit_record_checker_rejects_status_exit_code_mismatch(tmp_path: Path) -> None:

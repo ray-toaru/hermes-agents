@@ -161,6 +161,10 @@ def build_report(root: Path, now: datetime, generated_at: str) -> dict[str, Any]
         "summary": {
             "has_blocking_locks": blocking_count > 0,
             "manual_review_required": True,
+            "does_not_acquire_locks": True,
+            "does_not_release_locks": True,
+            "does_not_repair_locks": True,
+            "does_not_override_locks": True,
             "note": "This report is read-only evidence. It does not release, rewrite, or repair locks.",
         },
     }

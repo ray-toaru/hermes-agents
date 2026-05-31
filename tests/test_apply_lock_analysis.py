@@ -80,6 +80,10 @@ def test_apply_lock_analysis_reports_no_locks(tmp_path: Path) -> None:
     assert report["lock_count"] == 0
     assert report["blocking_count"] == 0
     assert report["summary"]["has_blocking_locks"] is False
+    assert report["summary"]["does_not_acquire_locks"] is True
+    assert report["summary"]["does_not_release_locks"] is True
+    assert report["summary"]["does_not_repair_locks"] is True
+    assert report["summary"]["does_not_override_locks"] is True
 
 
 def test_apply_lock_analysis_rejects_output_argument(tmp_path: Path) -> None:
@@ -159,6 +163,10 @@ def test_apply_lock_analysis_report_validation_rejects_count_mismatch(tmp_path: 
         "summary": {
             "has_blocking_locks": False,
             "manual_review_required": True,
+            "does_not_acquire_locks": True,
+            "does_not_release_locks": True,
+            "does_not_repair_locks": True,
+            "does_not_override_locks": True,
             "note": "Read-only.",
         },
     }
@@ -166,3 +174,29 @@ def test_apply_lock_analysis_report_validation_rejects_count_mismatch(tmp_path: 
     result = run_analyzer(root, "--validate-report", str(report_path))
     assert result.returncode == 1
     assert "lock_count" in result.stdout
+
+
+def test_apply_lock_analysis_report_rejects_lock_release_authority_claim(tmp_path: Path) -> None:
+    root = prepare_root(tmp_path)
+    report = {
+        "schema_version": 1,
+        "generated_at": NOW,
+        "generated_by": "analyze-apply-locks",
+        "mutation_enabled": False,
+        "lock_count": 0,
+        "blocking_count": 0,
+        "locks": [],
+        "summary": {
+            "has_blocking_locks": False,
+            "manual_review_required": True,
+            "does_not_acquire_locks": True,
+            "does_not_release_locks": False,
+            "does_not_repair_locks": True,
+            "does_not_override_locks": True,
+            "note": "Read-only.",
+        },
+    }
+    report_path = write_yaml(tmp_path / "report.yaml", report)
+    result = run_analyzer(root, "--validate-report", str(report_path))
+    assert result.returncode == 1
+    assert "does_not_release_locks" in result.stdout
