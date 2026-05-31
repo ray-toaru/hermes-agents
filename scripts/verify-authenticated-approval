@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""Generate authenticated approval evidence in read-only verifier modes.
+
+This verifier is intentionally read-only. The only implemented mode is
+`fixture_contract_only`, which converts local repository approval records into
+an authenticated approval evidence contract for tests and future integration
+work. Real `live_github` and `signed_attestation` modes fail closed until they
+are implemented in separate reviewed PRs.
+
+The verifier does not contact external services, read secrets, mutate profiles,
+mutate runtime state, acquire locks, or authorize apply.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_yaml(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def agent_from_change_id(change_id: str) -> str | None:
+    parts = change_id.split("_")
+    return parts[1] if len(parts) == 3 else None
+
+
+def load_change(root: Path, change_id: str) -> tuple[dict[str, Any], str]:
+    change_dir = root / "changes" / change_id
+    proposal_path = change_dir / "proposal.yaml"
+    diff_path = change_dir / "diff.patch"
+    if not proposal_path.exists():
+        raise RuntimeError(f"missing proposal: {proposal_path.relative_to(root)}")
+    if not diff_path.exists():
+        raise RuntimeError(f"missing diff: {diff_path.relative_to(root)}")
+    proposal = load_yaml(proposal_path)
+    if not isinstance(proposal, dict):
+        raise RuntimeError("proposal must be a mapping")
+    diff_text = diff_path.read_text(encoding="utf-8")
+    diff_sha256 = sha256_text(diff_text)
+    if proposal.get("change_id") != change_id:
+        raise RuntimeError("proposal change_id mismatch")
+    if proposal.get("diff_sha256") != diff_sha256:
+        raise RuntimeError("proposal diff_sha256 mismatch")
+    expected_agent = agent_from_change_id(change_id)
+    if expected_agent and proposal.get("agent") != expected_agent:
+        raise RuntimeError("proposal agent does not match change_id")
+    return proposal, diff_sha256
+
+
+def load_approvals(root: Path, change_id: str, diff_sha256: str) -> tuple[list[dict[str, Any]], bool]:
+    approvals_dir = root / "changes" / change_id / "approvals"
+    if not approvals_dir.exists():
+        return [], False
+    approvals: list[dict[str, Any]] = []
+    rejections_present = False
+    seen_approvers: set[str] = set()
+    for approval_path in sorted(approvals_dir.glob("*.yaml")):
+        approval = load_yaml(approval_path)
+        if not isinstance(approval, dict):
+            raise RuntimeError(f"approval must be a mapping: {approval_path.relative_to(root)}")
+        if approval.get("change_id") != change_id:
+            raise RuntimeError(f"approval change_id mismatch: {approval_path.relative_to(root)}")
+        if approval.get("diff_sha256") != diff_sha256:
+            raise RuntimeError(f"approval diff_sha256 mismatch: {approval_path.relative_to(root)}")
+        decision = approval.get("decision")
+        approver = approval.get("approver")
+        if decision == "reject":
+            rejections_present = True
+            continue
+        if decision != "approve":
+            raise RuntimeError(f"unsupported approval decision {decision!r}: {approval_path.relative_to(root)}")
+        if not isinstance(approver, str) or not approver:
+            raise RuntimeError(f"approval approver is missing: {approval_path.relative_to(root)}")
+        if approver in seen_approvers:
+            raise RuntimeError(f"duplicate approval approver {approver!r}")
+        seen_approvers.add(approver)
+        approvals.append(approval)
+    return approvals, rejections_present
+
+
+def build_fixture_evidence(root: Path, args: argparse.Namespace) -> dict[str, Any]:
+    proposal, diff_sha256 = load_change(root, args.change_id)
+    approvals, rejections_present = load_approvals(root, args.change_id, diff_sha256)
+    required_approvals = int(proposal.get("required_approvals") or 1)
+    if rejections_present:
+        raise RuntimeError("rejections are present; authenticated approval verification fails closed")
+    if len(approvals) < required_approvals:
+        raise RuntimeError(f"approval threshold unmet: {len(approvals)} approvals, require {required_approvals}")
+
+    verified_at = args.verified_at or utc_now_iso()
+    verified_approvals: list[dict[str, Any]] = []
+    for approval in approvals:
+        approver = str(approval["approver"])
+        verified_approvals.append(
+            {
+                "approver": approver,
+                "decision": "approve",
+                "approved_at": approval.get("created_at"),
+                "identity_provider": "github",
+                "identity_subject": approver,
+                "permission": args.fixture_permission,
+                "evidence_kind": "pull_request_review",
+                "evidence_ref": args.fixture_evidence_ref,
+                "diff_sha256": diff_sha256,
+                "verified": True,
+            }
+        )
+
+    return {
+        "schema_version": 1,
+        "authenticated_approval_id": f"{args.change_id}_authenticated_approval",
+        "change_id": args.change_id,
+        "agent": proposal.get("agent"),
+        "repository": {
+            "provider": "github",
+            "full_name": args.repository,
+            "default_branch": args.default_branch,
+        },
+        "diff_sha256": diff_sha256,
+        "required_approvals": required_approvals,
+        "verified_approvals": verified_approvals,
+        "rejections_present": False,
+        "verified_at": verified_at,
+        "verified_by": "fixture-contract-only",
+        "verifier_mode": "fixture_contract_only",
+        "mutation_enabled": False,
+        "apply_authorized": False,
+        "status": "verified_not_authorized",
+        "assertions": {
+            "repository_bound": True,
+            "change_id_bound": True,
+            "diff_hash_bound": True,
+            "approval_threshold_met": True,
+            "no_rejections_present": True,
+            "all_approvals_verified": True,
+            "does_not_authorize_apply": True,
+            "does_not_mutate_profiles_or_runtime": True,
+            "does_not_read_secret_values": True,
+            "business_orchestration_not_authorized": True,
+        },
+    }
+
+
+def validate_evidence(root: Path, evidence: dict[str, Any]) -> list[str]:
+    schema = load_json(root / "schemas" / "authenticated-approval.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    errors: list[str] = []
+    for error in sorted(validator.iter_errors(evidence), key=lambda item: list(item.path)):
+        location = ".".join(str(part) for part in error.path) or "<root>"
+        errors.append(f"{location}: {error.message}")
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="verify-authenticated-approval")
+    parser.add_argument("change_id")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--mode", choices=["fixture_contract_only", "live_github", "signed_attestation"], default="fixture_contract_only")
+    parser.add_argument("--repository", default="ray-toaru/hermes-agents")
+    parser.add_argument("--default-branch", default="main")
+    parser.add_argument("--verified-at")
+    parser.add_argument("--fixture-permission", choices=["write", "maintain", "admin"], default="write")
+    parser.add_argument("--fixture-evidence-ref", default="fixture://local-approval-records")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    if args.mode in {"live_github", "signed_attestation"}:
+        print(f"authenticated approval verifier mode {args.mode!r} is not implemented; failing closed", file=sys.stderr)
+        return 2
+    try:
+        evidence = build_fixture_evidence(root, args)
+        errors = validate_evidence(root, evidence)
+    except Exception as exc:
+        print(f"authenticated approval verification failed: {exc}", file=sys.stderr)
+        return 2
+    if errors:
+        print("authenticated approval evidence validation failed:", file=sys.stderr)
+        for error in errors:
+            print(f"- {error}", file=sys.stderr)
+        return 2
+    print(yaml.safe_dump(evidence, sort_keys=False), end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
