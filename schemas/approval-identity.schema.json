@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/approval-identity.schema.json",
+  "title": "Hermes AgentOps Approval Identity Evidence",
+  "description": "A read-only governance evidence record that binds approval records to externally authenticated review evidence. This schema does not prove cryptographic identity by itself and does not enable apply.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "identity_evidence_id",
+    "change_id",
+    "agent",
+    "approver",
+    "created_at",
+    "created_by",
+    "mutation_enabled",
+    "identity_method",
+    "external_identity",
+    "approval_record_sha256",
+    "diff_sha256",
+    "assertions"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "identity_evidence_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_[a-z][a-z0-9-]{1,62}_identity$"},
+    "change_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}$"},
+    "agent": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "approver": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "created_by": {"type": "string", "minLength": 1},
+    "mutation_enabled": {"type": "boolean", "const": false},
+    "identity_method": {"type": "string", "enum": ["github_review", "github_issue_comment", "signed_external_attestation"]},
+    "external_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "subject", "evidence_url", "verified_by"],
+      "properties": {
+        "provider": {"type": "string", "enum": ["github", "external_attestation"]},
+        "subject": {"type": "string", "minLength": 1},
+        "evidence_url": {"type": "string", "minLength": 1},
+        "verified_by": {"type": "string", "minLength": 1}
+      }
+    },
+    "approval_record_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "diff_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "assertions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reviewed_diff",
+        "approver_matches_external_identity",
+        "approval_record_bound_to_diff",
+        "identity_evidence_is_not_secret",
+        "does_not_authorize_apply",
+        "business_orchestration_not_authorized"
+      ],
+      "properties": {
+        "reviewed_diff": {"type": "boolean", "const": true},
+        "approver_matches_external_identity": {"type": "boolean", "const": true},
+        "approval_record_bound_to_diff": {"type": "boolean", "const": true},
+        "identity_evidence_is_not_secret": {"type": "boolean", "const": true},
+        "does_not_authorize_apply": {"type": "boolean", "const": true},
+        "business_orchestration_not_authorized": {"type": "boolean", "const": true}
+      }
+    }
+  }
+}

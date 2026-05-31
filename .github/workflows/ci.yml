@@ -24,7 +24,7 @@ jobs:
 
       - name: Compile CLI
         run: |
-          python -m py_compile scripts/hermes-agentops scripts/check-codeowners scripts/check-pre-apply-plan scripts/generate-pre-apply-plan scripts/check-apply-lock scripts/acquire-apply-lock scripts/check-rollback-point scripts/check-audit-record
+          python -m py_compile scripts/hermes-agentops scripts/check-codeowners scripts/check-pre-apply-plan scripts/generate-pre-apply-plan scripts/check-apply-lock scripts/acquire-apply-lock scripts/check-rollback-point scripts/check-audit-record scripts/check-approval-identity
 
       - name: Validate schemas
         run: |
@@ -53,6 +53,10 @@ jobs:
       - name: Validate audit record example
         run: |
           python scripts/check-audit-record
+
+      - name: Validate approval identity example
+        run: |
+          python scripts/check-approval-identity
 
       - name: Run tests
         run: |
