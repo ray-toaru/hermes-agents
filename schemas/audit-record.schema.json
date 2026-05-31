@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/audit-record.schema.json",
+  "title": "Hermes AgentOps Audit Record",
+  "description": "A read-only governance evidence record for future apply pipeline auditing. This schema does not enable apply, mutate profiles, read secrets, or touch runtime state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "audit_record_id",
+    "change_id",
+    "agent",
+    "created_at",
+    "created_by",
+    "mutation_enabled",
+    "status",
+    "git",
+    "evidence",
+    "commands",
+    "boundaries",
+    "failure_recovery"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "audit_record_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_audit$"},
+    "change_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}$"},
+    "agent": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "created_by": {"type": "string", "minLength": 1},
+    "mutation_enabled": {"type": "boolean", "const": false},
+    "status": {"type": "string", "enum": ["validation_only", "recorded_no_mutation", "failed_pre_mutation"]},
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head_before", "head_after", "working_tree_clean_before", "working_tree_clean_after"],
+      "properties": {
+        "head_before": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+        "head_after": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+        "working_tree_clean_before": {"type": "boolean"},
+        "working_tree_clean_after": {"type": "boolean"}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pre_apply_plan_sha256", "apply_lock_sha256", "rollback_point_sha256"],
+      "properties": {
+        "pre_apply_plan_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "apply_lock_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "rollback_point_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      }
+    },
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "command", "exit_code", "status", "output_sha256", "redacted_summary"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$"},
+          "command": {"type": "string", "minLength": 1},
+          "exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
+          "status": {"type": "string", "enum": ["success", "failed"]},
+          "output_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "redacted_summary": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "no_secret_values_read",
+        "no_runtime_state_mutated",
+        "no_profile_files_mutated",
+        "no_business_actions_executed",
+        "apply_remained_disabled"
+      ],
+      "properties": {
+        "no_secret_values_read": {"type": "boolean", "const": true},
+        "no_runtime_state_mutated": {"type": "boolean", "const": true},
+        "no_profile_files_mutated": {"type": "boolean", "const": true},
+        "no_business_actions_executed": {"type": "boolean", "const": true},
+        "apply_remained_disabled": {"type": "boolean", "const": true}
+      }
+    },
+    "failure_recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manual_review_required", "rollback_not_executed_by_validator", "note"],
+      "properties": {
+        "manual_review_required": {"type": "boolean", "const": true},
+        "rollback_not_executed_by_validator": {"type": "boolean", "const": true},
+        "note": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}
