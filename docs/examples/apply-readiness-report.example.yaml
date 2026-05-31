@@ -1,0 +1,87 @@
+schema_version: 1
+readiness_report_id: 20260530T000000Z_agentops_aaaaaaaaaa_readiness
+change_id: 20260530T000000Z_agentops_aaaaaaaaaa
+agent: agentops
+generated_at: "2026-05-30T00:00:00Z"
+generated_by: check-apply-readiness
+mutation_enabled: false
+apply_authorized: false
+status: evidence_complete_not_authorized
+gate_count: 8
+blocking_count: 0
+gates:
+  - name: change_verify
+    phase: pre_apply
+    required_before_apply: true
+    status: present
+    blocking: false
+    evidence_path: changes/20260530T000000Z_agentops_aaaaaaaaaa/proposal.yaml
+    evidence_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    note: Change proposal and approvals are valid evidence only.
+  - name: approval_identity
+    phase: pre_apply
+    required_before_apply: true
+    status: present
+    blocking: false
+    evidence_path: changes/20260530T000000Z_agentops_aaaaaaaaaa/approval-identity.yaml
+    evidence_sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    note: Identity evidence is a reference, not authentication authority.
+  - name: pre_apply_plan
+    phase: pre_apply
+    required_before_apply: true
+    status: present
+    blocking: false
+    evidence_path: changes/20260530T000000Z_agentops_aaaaaaaaaa/pre-apply-plan.yaml
+    evidence_sha256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    note: Plan evidence does not authorize mutation.
+  - name: apply_lock_analysis
+    phase: pre_apply
+    required_before_apply: true
+    status: present
+    blocking: false
+    evidence_path: docs/examples/apply-lock-analysis.example.yaml
+    evidence_sha256: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    note: Lock analysis must show no blocking locks before any future apply.
+  - name: apply_lock_record
+    phase: future_apply
+    required_before_apply: false
+    status: future_only
+    blocking: false
+    evidence_path: changes/20260530T000000Z_agentops_aaaaaaaaaa/apply-lock.yaml
+    evidence_sha256: null
+    note: Real lock acquisition is future-only and not performed by this report.
+  - name: rollback_point
+    phase: future_apply
+    required_before_apply: false
+    status: future_only
+    blocking: false
+    evidence_path: changes/20260530T000000Z_agentops_aaaaaaaaaa/rollback-point.yaml
+    evidence_sha256: null
+    note: Rollback point creation is future-only and not performed by this report.
+  - name: audit_record
+    phase: future_apply
+    required_before_apply: false
+    status: future_only
+    blocking: false
+    evidence_path: changes/20260530T000000Z_agentops_aaaaaaaaaa/audit-record.yaml
+    evidence_sha256: null
+    note: Audit record is future mutation evidence, not current authorization.
+  - name: post_apply_validation
+    phase: post_apply
+    required_before_apply: false
+    status: future_only
+    blocking: false
+    evidence_path: changes/20260530T000000Z_agentops_aaaaaaaaaa/post-apply-validation.yaml
+    evidence_sha256: null
+    note: Post-apply validation cannot be required before apply and does not authorize apply.
+boundaries:
+  report_is_read_only: true
+  does_not_authorize_apply: true
+  does_not_acquire_or_release_locks: true
+  does_not_mutate_profiles_or_runtime: true
+  does_not_read_secret_values: true
+  does_not_execute_rollback: true
+  does_not_orchestrate_business_tasks: true
+summary:
+  human_review_required: true
+  note: Evidence completeness does not authorize apply; mutation remains disabled.
