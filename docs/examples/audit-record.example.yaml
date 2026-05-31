@@ -1,0 +1,40 @@
+schema_version: 1
+audit_record_id: 20260530T000000Z_agentops_aaaaaaaaaa_audit
+change_id: 20260530T000000Z_agentops_aaaaaaaaaa
+agent: agentops
+created_at: "2026-05-30T00:00:00Z"
+created_by: operator
+mutation_enabled: false
+status: validation_only
+git:
+  head_before: "0000000000000000000000000000000000000000"
+  head_after: "0000000000000000000000000000000000000000"
+  working_tree_clean_before: true
+  working_tree_clean_after: true
+evidence:
+  pre_apply_plan_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  apply_lock_sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  rollback_point_sha256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+commands:
+  - name: changes_verify
+    command: "python scripts/hermes-agentops changes verify 20260530T000000Z_agentops_aaaaaaaaaa --check-git-clean --check-patch-applicable"
+    exit_code: 0
+    status: success
+    output_sha256: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    redacted_summary: Validation completed without reading secrets or mutating runtime state.
+  - name: rollback_point_validate
+    command: "python scripts/check-rollback-point"
+    exit_code: 0
+    status: success
+    output_sha256: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    redacted_summary: Rollback point record validation passed.
+boundaries:
+  no_secret_values_read: true
+  no_runtime_state_mutated: true
+  no_profile_files_mutated: true
+  no_business_actions_executed: true
+  apply_remained_disabled: true
+failure_recovery:
+  manual_review_required: true
+  rollback_not_executed_by_validator: true
+  note: This audit record is evidence only. Recovery remains manual and operator-reviewed.
