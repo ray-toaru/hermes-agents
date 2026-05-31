@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/apply-lock-analysis.schema.json",
+  "title": "Hermes AgentOps Apply Lock Analysis Report",
+  "description": "A read-only repository-wide analysis report for apply-lock governance records. This schema does not enable apply, acquire locks, release locks, or mutate records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "generated_by",
+    "mutation_enabled",
+    "lock_count",
+    "blocking_count",
+    "locks",
+    "summary"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "generated_by": {"type": "string", "minLength": 1},
+    "mutation_enabled": {"type": "boolean", "const": false},
+    "lock_count": {"type": "integer", "minimum": 0},
+    "blocking_count": {"type": "integer", "minimum": 0},
+    "locks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "change_id", "agent", "status", "effective_status", "blocking", "reason"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "change_id": {"type": "string", "minLength": 1},
+          "agent": {"type": "string", "minLength": 1},
+          "status": {"type": "string", "minLength": 1},
+          "effective_status": {"type": "string", "enum": ["active", "released", "stale", "recovery_required", "expired_active", "invalid"]},
+          "blocking": {"type": "boolean"},
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["has_blocking_locks", "manual_review_required", "note"],
+      "properties": {
+        "has_blocking_locks": {"type": "boolean"},
+        "manual_review_required": {"type": "boolean", "const": true},
+        "note": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

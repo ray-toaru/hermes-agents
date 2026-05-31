@@ -1,0 +1,25 @@
+schema_version: 1
+generated_at: "2026-05-30T00:00:00Z"
+generated_by: analyze-apply-locks
+mutation_enabled: false
+lock_count: 2
+blocking_count: 1
+locks:
+  - path: changes/20260530T000000Z_agentops_aaaaaaaaaa/apply-lock.yaml
+    change_id: 20260530T000000Z_agentops_aaaaaaaaaa
+    agent: agentops
+    status: active
+    effective_status: active
+    blocking: true
+    reason: active exclusive repository lock blocks future apply attempts
+  - path: changes/20260530T010000Z_agentops_bbbbbbbbbb/apply-lock.yaml
+    change_id: 20260530T010000Z_agentops_bbbbbbbbbb
+    agent: agentops
+    status: released
+    effective_status: released
+    blocking: false
+    reason: released lock is non-blocking
+summary:
+  has_blocking_locks: true
+  manual_review_required: true
+  note: This report is read-only evidence. It does not release, rewrite, or repair locks.
