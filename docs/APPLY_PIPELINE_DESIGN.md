@@ -6,6 +6,8 @@ This is the project-level design for a future apply pipeline. It is not an imple
 
 Current status: `apply` is disabled and must remain non-zero.
 
+As of v2.0, the repository has several implemented read-only evidence layers and two constrained governance-record generators. These records improve reviewability, but none of them authorize mutation.
+
 ## Pipeline Summary
 
 A future apply must be a linear, fail-closed pipeline:
@@ -16,7 +18,9 @@ policy/schema validation
   -> approval verification
   -> strict clean-state and patch applicability verification
   -> pre-apply plan generation
-  -> lock acquisition record generation
+  -> apply-lock record generation
+  -> apply-lock analysis
+  -> apply-readiness evidence report
   -> future real lock acquisition
   -> rollback point creation
   -> mutation
@@ -29,7 +33,7 @@ policy/schema validation
 
 | Phase | Current Status | Mutation? | Notes |
 | --- | --- | --- | --- |
-| Policy/schema validation | implemented | no | Validates policy, schema, profile metadata. |
+| Policy/schema validation | implemented | no | Validates policy, schema, profile metadata. Invalid policy fails closed. |
 | Change verification | implemented | no | Verifies proposal, diff, approvals, path scope, hashes. |
 | Git clean check | implemented dry-run | no | Optional for base verify; required by plan generation and future apply. |
 | Patch applicability | implemented dry-run | no | Optional for base verify; required by plan generation and future apply; uses `git apply --check`. |
@@ -37,13 +41,17 @@ policy/schema validation
 | Pre-apply plan schema | implemented | no | `mutation_enabled: false`. |
 | Pre-apply plan generation | implemented governance write | governance record only | Writes canonical `changes/<id>/pre-apply-plan.yaml` only after apply-ready verification. |
 | Apply-lock schema/checker | implemented read-only | no | Validates lock contract only. |
-| Apply-lock record generation | implemented governance write | governance record only | Writes canonical `changes/<id>/apply-lock.yaml` after valid plan and no blocking lock. |
+| Apply-lock record generation | implemented governance write | governance record only | Writes canonical `changes/<id>/apply-lock.yaml` after valid plan and no blocking lock evidence. |
+| Apply-lock analysis | implemented read-only | no | Reports blocking lock evidence to stdout only; does not acquire/release/repair locks or write reports. |
+| Apply-readiness report | implemented read-only | no | Aggregates evidence gates; `apply_authorized: false` is mandatory. |
+| Rollback point schema/checker | implemented read-only | no | Validates rollback-point evidence only; does not create rollback points or execute rollback. |
+| Audit record schema/checker | implemented read-only | no | Validates audit evidence only; command evidence is not execution authority. |
+| Approval identity schema/checker | implemented read-only | no | Validates identity evidence references only; does not authenticate live identity. |
+| Post-apply validation schema/checker | implemented read-only | no | Validates post-apply validation evidence only; does not execute apply or rollback. |
 | Real lock acquisition | not implemented | future | Future runtime/concurrency primitive; must be reviewed separately. |
-| Rollback point creation | not implemented | future | Must record pre-apply Git HEAD. |
+| Rollback point creation | not implemented | future | Must record pre-apply Git HEAD and prove referenced commits exist. |
 | Patch mutation | disabled | future | Must be separate from dry-run. |
 | Runtime-adjacent health/deployment/repair management | not implemented | future | Requires separate design; cannot bypass Hermes runtime or become business orchestration. |
-| Post-apply validation | not implemented | future | Must validate profile and governance state after mutation. |
-| Audit record | not implemented | future | Must capture commands, outputs, exit codes, Git HEADs, lock lifecycle. |
 | Lock release/recovery | not implemented | future | Must preserve failure evidence when needed. |
 
 ## Required Future Apply Gates
@@ -56,31 +64,36 @@ A future mutation command must fail closed unless all are true:
 4. Change proposal validates.
 5. `diff.patch` hash matches proposal.
 6. Approval records validate and meet policy threshold.
-7. No valid rejection is present.
-8. All paths remain under the managed profile scope.
-9. Target profile worktree is clean.
-10. Patch applicability succeeds immediately before mutation.
-11. Pre-apply plan exists, validates, and binds to current base commit and diff evidence.
-12. Operator confirms the plan.
-13. Apply-lock governance record is created and bound to the actual plan bytes.
-14. A future real repository-scoped exclusive lock is acquired.
-15. Rollback point is recorded.
-16. Patch is applied only to expected profile paths.
-17. Post-apply profile validation succeeds.
-18. Audit record is written.
-19. Lock is released on success or preserved with failure evidence on failure.
+7. Approval identity is verified against live or cryptographically signed evidence, not only YAML references.
+8. No valid rejection is present.
+9. All paths remain under the managed profile scope.
+10. Target profile worktree is clean.
+11. Patch applicability succeeds immediately before mutation.
+12. Pre-apply plan exists, validates, and binds to current base commit and diff evidence.
+13. Operator confirms the plan.
+14. Apply-lock governance record is created and bound to the actual plan bytes.
+15. Apply-lock analysis shows no blocking active, expired-active, stale, recovery-required, or invalid lock evidence.
+16. Apply-readiness evidence report validates and still states `apply_authorized: false`; authorization must come from the future apply command's own reviewed gates, not from the report.
+17. A future real repository-scoped exclusive lock is acquired atomically.
+18. Rollback point is recorded and referenced Git objects are proven present.
+19. Patch is applied only to expected profile paths.
+20. Post-apply profile validation succeeds.
+21. Audit record is written from structured evidence, not trusted shell-like strings.
+22. Lock is released on success or preserved with failure evidence on failure.
 
 ## Prohibited Shortcuts
 
 A future implementation must not:
 
 - treat approval records as identity proof;
+- treat approval identity YAML or URLs as live authentication proof;
 - treat plan generation as apply authorization;
-- treat lock validation or lock-record generation as mutation authority;
+- treat lock validation, lock-record generation, lock analysis, or readiness reports as mutation authority;
 - skip Git clean checks because a plan exists;
 - skip patch applicability because it passed earlier;
-- apply without rollback point;
-- apply without audit record;
+- apply without a real acquired lock;
+- apply without rollback point creation;
+- apply without audit record capture;
 - delete stale lock evidence automatically;
 - mutate runtime state or execute business actions;
 - introduce runtime-adjacent management by silently expanding validators, plan generation, or lock validation.
@@ -102,15 +115,17 @@ If failure occurs after mutation starts, future implementation must:
 
 Do not jump directly to mutation. Implement in this order:
 
-1. authenticated approval identity design;
-2. repository-wide clean-state policy;
-3. lock acquisition/release design with read-only tests first;
-4. rollback point schema and validator;
-5. audit record schema and validator;
-6. sandboxed apply dry-run integration tests;
-7. post-apply validation design;
-8. mutation implementation behind explicit non-default command;
-9. failure recovery tests;
-10. ruleset and CODEOWNERS review of the whole pipeline.
+1. project-level docs and roadmap kept current with implementation state;
+2. authenticated approval identity design using live GitHub or cryptographically signed evidence;
+3. structured command evidence design to replace shell-like command strings for execution-adjacent records;
+4. repository-wide clean-state policy for future mutation;
+5. real lock acquisition/release design with read-only tests first;
+6. rollback point creation design, including Git object existence checks;
+7. sandboxed apply dry-run integration tests;
+8. post-apply validation execution design;
+9. audit capture design for mutation and recovery;
+10. mutation implementation behind explicit non-default command;
+11. failure recovery tests;
+12. ruleset and CODEOWNERS review of the whole pipeline.
 
 Runtime-adjacent health, deployment, or repair management should be designed as a separate track unless it is strictly required by the apply pipeline. It must begin read-only where possible and must not become business task routing.

@@ -44,7 +44,7 @@ Purpose:
 - define risk approval thresholds;
 - define critical path patterns.
 
-Code constants are fallbacks only. Repository behavior should load and validate policy.
+Code constants are fallbacks only. Repository behavior should load and validate policy. Invalid policy must fail closed.
 
 ### Change Proposal
 
@@ -87,6 +87,20 @@ Important limitation:
 - they are governance evidence only;
 - future authenticated approval design is still required before mutation.
 
+### Approval Identity Evidence
+
+`changes/<change_id>/approval-identity.yaml` or equivalent referenced identity evidence.
+
+Purpose:
+
+- bind an approver to identity evidence for a specific `change_id` and approval record;
+- preserve provider/method metadata for future authenticated approval gates.
+
+Important limitation:
+
+- current checker validates evidence shape and bindings only;
+- URLs or YAML fields are references, not live authentication authority.
+
 ### Pre-Apply Plan
 
 `changes/<change_id>/pre-apply-plan.yaml`.
@@ -103,7 +117,7 @@ Important limitation:
 
 ### Apply Lock
 
-A future governance record described by `schemas/apply-lock.schema.json`.
+`changes/<change_id>/apply-lock.yaml`.
 
 Purpose:
 
@@ -115,25 +129,78 @@ Purpose:
 Important limitation:
 
 - current checker validates lock records read-only;
-- current system does not acquire or release locks.
+- current generator writes a governance record only;
+- current system does not acquire or release real locks.
 
-### Rollback Point
+### Apply Lock Analysis Report
 
-Future record, not implemented.
+A repository-wide read-only report validated by `schemas/apply-lock-analysis.schema.json`.
 
 Purpose:
 
-- bind a future mutation attempt to the pre-apply Git HEAD;
+- classify existing lock records as blocking or non-blocking;
+- treat active, expired-active, stale, recovery-required, invalid, and unparsable locks conservatively.
+
+Important limitation:
+
+- report generation is stdout-only;
+- it does not acquire, release, rewrite, delete, or repair locks.
+
+### Rollback Point
+
+`changes/<change_id>/rollback-point.yaml`.
+
+Purpose:
+
+- bind future mutation evidence to the pre-apply Git HEAD;
 - support Git-first rollback on failure.
+
+Important limitation:
+
+- current checker validates rollback-point evidence only;
+- current system does not create rollback points or execute rollback.
 
 ### Audit Record
 
-Future record, not implemented.
+`changes/<change_id>/audit-record.yaml`.
 
 Purpose:
 
 - capture before/after Git HEAD;
-- capture commands, stdout/stderr, exit codes, validation output, lock lifecycle, and recovery actions.
+- capture command evidence, exit codes, validation output hashes, lock lifecycle references, and recovery actions.
+
+Important limitation:
+
+- current checker validates audit evidence only;
+- command strings in current records are not execution authority.
+
+### Post-Apply Validation Evidence
+
+`changes/<change_id>/post-apply-validation.yaml`.
+
+Purpose:
+
+- record validation evidence for a future post-apply phase;
+- bind to expected and actual Git HEADs, audit hash, command evidence, and success/failure status.
+
+Important limitation:
+
+- current checker validates evidence only;
+- it does not execute apply, validation commands, or rollback.
+
+### Apply Readiness Report
+
+A read-only aggregate report validated by `schemas/apply-readiness-report.schema.json`.
+
+Purpose:
+
+- summarize whether required governance evidence gates are present, missing, blocked, invalid, or future-only;
+- make readiness evidence explicit for human review.
+
+Important limitation:
+
+- `apply_authorized` must remain `false`;
+- evidence completeness is not execution authority.
 
 ### Runtime State
 
@@ -170,6 +237,10 @@ Approval Record
   -> Change Proposal by change_id
   -> Diff Patch by diff_sha256
 
+Approval Identity Evidence
+  -> Approval Record by approver / approval hash
+  -> Change Proposal by change_id
+
 Pre-Apply Plan
   -> Change Proposal by change_id
   -> verified gate set
@@ -181,11 +252,33 @@ Apply Lock
   -> Pre-Apply Plan by pre_apply_plan_sha256
   -> base_commit
 
-Future Audit Record
+Apply Lock Analysis Report
+  -> Apply Lock records by path/status
+
+Rollback Point
+  -> Change Proposal
+  -> Pre-Apply Plan
+  -> Apply Lock
+  -> pre-apply Git HEAD
+
+Audit Record
   -> Change Proposal
   -> Pre-Apply Plan
   -> Apply Lock
   -> Rollback Point
+  -> command evidence
+
+Post-Apply Validation Evidence
+  -> Change Proposal
+  -> Audit Record
+  -> expected/actual Git HEADs
+
+Apply Readiness Report
+  -> Change Proposal
+  -> Approval Identity Evidence
+  -> Pre-Apply Plan
+  -> Apply Lock Analysis Report
+  -> future Apply Lock / Rollback / Audit / Post-Apply evidence slots
 ```
 
 ## Trust Levels
@@ -196,7 +289,13 @@ Future Audit Record
 | Policy | Governance authority | Threshold and forbidden-operation source. |
 | Proposal | Review input | Must be hash-bound to diff. |
 | Approval | Review evidence | Not identity proof. |
+| Approval identity | Identity evidence reference | Not live authentication authority. |
 | Pre-apply plan | Prepared evidence | Not execution authority. |
-| Apply lock | Future concurrency evidence | Current checker is read-only. |
+| Apply lock | Future concurrency evidence | Current checker/generator do not acquire or release real locks. |
+| Apply lock analysis | Blocking evidence summary | Does not mutate locks. |
+| Rollback point | Recovery evidence | Current checker does not create rollback points or execute rollback. |
+| Audit record | Execution/recovery evidence | Current checker validates evidence only. |
+| Post-apply validation | Completion evidence | Current checker does not execute validation. |
+| Apply readiness report | Aggregate evidence summary | Must keep `apply_authorized: false`. |
 | CI result | Validation evidence | Not a substitute for GitHub ruleset enforcement. |
 | Ruleset | Merge enforcement | External GitHub setting; record evidence when changed. |
