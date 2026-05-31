@@ -172,6 +172,48 @@ def test_apply_readiness_checker_rejects_post_apply_required_before_apply(tmp_pa
     assert "post_apply_validation cannot be required" in result.stdout
 
 
+def test_apply_readiness_checker_rejects_required_gate_marked_future_only(tmp_path: Path) -> None:
+    record = valid_report()
+    record["gates"][0]["phase"] = "future_apply"
+    record["gates"][0]["required_before_apply"] = False
+    record["gates"][0]["status"] = "future_only"
+    record["gates"][0]["evidence_sha256"] = None
+    path = write_yaml(tmp_path / "readiness.yaml", record)
+    result = run_checker(ROOT, path)
+    assert result.returncode == 1
+    assert "required gate" in result.stdout
+    assert "must be present" in result.stdout
+
+
+def test_apply_readiness_checker_rejects_required_gate_without_hash(tmp_path: Path) -> None:
+    record = valid_report()
+    record["gates"][0]["evidence_sha256"] = None
+    path = write_yaml(tmp_path / "readiness.yaml", record)
+    result = run_checker(ROOT, path)
+    assert result.returncode == 1
+    assert "concrete evidence_sha256" in result.stdout
+
+
+def test_apply_readiness_checker_rejects_duplicate_gate_names(tmp_path: Path) -> None:
+    record = valid_report()
+    record["gates"].append(gate("change_verify"))
+    record["gate_count"] = len(record["gates"])
+    path = write_yaml(tmp_path / "readiness.yaml", record)
+    result = run_checker(ROOT, path)
+    assert result.returncode == 1
+    assert "duplicate gate names" in result.stdout
+
+
+def test_apply_readiness_checker_rejects_unsafe_evidence_paths(tmp_path: Path) -> None:
+    for bad_path in ("/tmp/evidence.yaml", "../evidence.yaml", "changes\\agentops\\evidence.yaml"):
+        record = valid_report()
+        record["gates"][0]["evidence_path"] = bad_path
+        path = write_yaml(tmp_path / f"readiness-{len(bad_path)}.yaml", record)
+        result = run_checker(ROOT, path)
+        assert result.returncode == 1
+        assert "safe relative path" in result.stdout
+
+
 def test_apply_readiness_checker_binds_required_evidence_files(tmp_path: Path) -> None:
     root = prepare_root(tmp_path)
     record = valid_report()

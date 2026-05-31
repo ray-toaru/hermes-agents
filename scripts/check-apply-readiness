@@ -41,6 +41,15 @@ def agent_from_change_id(change_id: str) -> str | None:
     return parts[1] if len(parts) == 3 else None
 
 
+def is_safe_relative_path(value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    if "\\" in value:
+        return False
+    candidate = Path(value)
+    return not candidate.is_absolute() and ".." not in candidate.parts
+
+
 def validate_report(root: Path, report: Any, path: Path, validator: jsonschema.Draft202012Validator, *, require_evidence_files: bool) -> list[str]:
     errors: list[str] = []
     for error in sorted(validator.iter_errors(report), key=lambda item: list(item.path)):
@@ -69,10 +78,29 @@ def validate_report(root: Path, report: Any, path: Path, validator: jsonschema.D
     if report.get("blocking_count") != blocking_count:
         errors.append(f"{path}: blocking_count must equal number of blocking gates")
 
-    gate_names = {gate.get("name") for gate in gates if isinstance(gate, dict)}
-    missing_required = sorted(REQUIRED_PRE_APPLY_GATES - gate_names)
+    gate_names: list[str] = [gate.get("name") for gate in gates if isinstance(gate, dict) and isinstance(gate.get("name"), str)]
+    duplicates = sorted({name for name in gate_names if gate_names.count(name) > 1})
+    if duplicates:
+        errors.append(f"{path}: duplicate gate names are not allowed: {duplicates}")
+
+    gate_by_name = {gate.get("name"): gate for gate in gates if isinstance(gate, dict)}
+    missing_required = sorted(REQUIRED_PRE_APPLY_GATES - set(gate_by_name))
     if missing_required:
         errors.append(f"{path}: missing required pre-apply gates {missing_required}")
+
+    for required_name in sorted(REQUIRED_PRE_APPLY_GATES & set(gate_by_name)):
+        gate = gate_by_name[required_name]
+        label = f"{path}: gate {required_name!r}"
+        if gate.get("phase") != "pre_apply":
+            errors.append(f"{label}: required gate must be pre_apply phase")
+        if gate.get("required_before_apply") is not True:
+            errors.append(f"{label}: required gate must have required_before_apply true")
+        if gate.get("status") != "present":
+            errors.append(f"{label}: required gate must be present")
+        if gate.get("blocking") is not False:
+            errors.append(f"{label}: required present gate must be non-blocking")
+        if not isinstance(gate.get("evidence_sha256"), str):
+            errors.append(f"{label}: required gate must have concrete evidence_sha256")
 
     for index, gate in enumerate(gates):
         if not isinstance(gate, dict):
@@ -94,8 +122,11 @@ def validate_report(root: Path, report: Any, path: Path, validator: jsonschema.D
             errors.append(f"{label}: post_apply_validation cannot be required before apply")
         evidence_path = gate.get("evidence_path")
         evidence_hash = gate.get("evidence_sha256")
-        if require_evidence_files and required_before_apply is True and isinstance(evidence_path, str):
-            file_path = root / evidence_path
+        if not is_safe_relative_path(evidence_path):
+            errors.append(f"{label}: evidence_path must be a safe relative path")
+            continue
+        if require_evidence_files and required_before_apply is True:
+            file_path = root / str(evidence_path)
             if not file_path.exists():
                 errors.append(f"{label}: required evidence file is missing: {evidence_path}")
             elif evidence_hash != sha256_file(file_path):
