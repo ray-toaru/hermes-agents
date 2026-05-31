@@ -11,7 +11,7 @@ required_approvals: 1
 verified_approvals:
   - approver: operator
     decision: approve
-    approved_at: 2026-05-30T00:01:00Z
+    approved_at: "2026-05-30T00:01:00Z"
     identity_provider: github
     identity_subject: operator
     permission: write
@@ -20,7 +20,7 @@ verified_approvals:
     diff_sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
     verified: true
 rejections_present: false
-verified_at: 2026-05-30T00:02:00Z
+verified_at: "2026-05-30T00:02:00Z"
 verified_by: fixture-contract-only
 verifier_mode: fixture_contract_only
 mutation_enabled: false
