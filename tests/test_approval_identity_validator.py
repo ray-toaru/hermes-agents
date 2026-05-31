@@ -81,6 +81,8 @@ def valid_record() -> dict[str, Any]:
             "approval_record_bound_to_diff": True,
             "identity_evidence_is_not_secret": True,
             "does_not_authorize_apply": True,
+            "live_authentication_not_performed": True,
+            "identity_evidence_does_not_grant_approval_authority": True,
             "business_orchestration_not_authorized": True,
         },
     }
@@ -135,6 +137,24 @@ def test_approval_identity_checker_rejects_subject_mismatch(tmp_path: Path) -> N
     result = run_checker(ROOT, path)
     assert result.returncode == 1
     assert "subject" in result.stdout
+
+
+def test_approval_identity_checker_rejects_live_authentication_claim(tmp_path: Path) -> None:
+    record = valid_record()
+    record["assertions"]["live_authentication_not_performed"] = False
+    path = write_yaml(tmp_path / "identity.yaml", record)
+    result = run_checker(ROOT, path)
+    assert result.returncode == 1
+    assert "live_authentication_not_performed" in result.stdout
+
+
+def test_approval_identity_checker_rejects_grant_approval_authority_claim(tmp_path: Path) -> None:
+    record = valid_record()
+    record["assertions"]["identity_evidence_does_not_grant_approval_authority"] = False
+    path = write_yaml(tmp_path / "identity.yaml", record)
+    result = run_checker(ROOT, path)
+    assert result.returncode == 1
+    assert "identity_evidence_does_not_grant_approval_authority" in result.stdout
 
 
 def test_approval_identity_checker_requires_approval_file(tmp_path: Path) -> None:

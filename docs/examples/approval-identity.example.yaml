@@ -20,4 +20,6 @@ assertions:
   approval_record_bound_to_diff: true
   identity_evidence_is_not_secret: true
   does_not_authorize_apply: true
+  live_authentication_not_performed: true
+  identity_evidence_does_not_grant_approval_authority: true
   business_orchestration_not_authorized: true

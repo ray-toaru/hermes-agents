@@ -22,4 +22,8 @@ locks:
 summary:
   has_blocking_locks: true
   manual_review_required: true
+  does_not_acquire_locks: true
+  does_not_release_locks: true
+  does_not_repair_locks: true
+  does_not_override_locks: true
   note: This report is read-only evidence. It does not release, rewrite, or repair locks.

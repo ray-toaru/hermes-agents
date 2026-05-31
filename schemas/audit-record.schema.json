@@ -56,10 +56,21 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "command", "exit_code", "status", "output_sha256", "redacted_summary"],
+        "required": [
+          "name",
+          "command",
+          "command_evidence_type",
+          "command_is_not_execution_authority",
+          "exit_code",
+          "status",
+          "output_sha256",
+          "redacted_summary"
+        ],
         "properties": {
           "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$"},
           "command": {"type": "string", "minLength": 1},
+          "command_evidence_type": {"type": "string", "const": "recorded_only"},
+          "command_is_not_execution_authority": {"type": "boolean", "const": true},
           "exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
           "status": {"type": "string", "enum": ["success", "failed"]},
           "output_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},

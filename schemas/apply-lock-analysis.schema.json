@@ -42,10 +42,22 @@
     "summary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["has_blocking_locks", "manual_review_required", "note"],
+      "required": [
+        "has_blocking_locks",
+        "manual_review_required",
+        "does_not_acquire_locks",
+        "does_not_release_locks",
+        "does_not_repair_locks",
+        "does_not_override_locks",
+        "note"
+      ],
       "properties": {
         "has_blocking_locks": {"type": "boolean"},
         "manual_review_required": {"type": "boolean", "const": true},
+        "does_not_acquire_locks": {"type": "boolean", "const": true},
+        "does_not_release_locks": {"type": "boolean", "const": true},
+        "does_not_repair_locks": {"type": "boolean", "const": true},
+        "does_not_override_locks": {"type": "boolean", "const": true},
         "note": {"type": "string", "minLength": 1}
       }
     }
