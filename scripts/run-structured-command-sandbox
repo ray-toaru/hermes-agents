@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""Run allowlisted validation-only structured commands in a sandbox.
+
+This runner is deliberately narrow. It validates a structured-command evidence
+record, ignores record-provided argv for dispatch, and executes only commands
+from the reviewed allowlist inside a temporary copied workspace. It does not
+support mutation, rollback, audit capture, real apply, secret reads, runtime
+mutation, or business orchestration.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+FORBIDDEN_PATH_PARTS = {".git", "logs", "sessions", "workspace", "workspaces", "runtime"}
+FORBIDDEN_FILENAMES = {".env", "secrets.json", "state.db"}
+COPY_DIRS = ("profiles", "policies", "schemas", "scripts", "inventory")
+ALLOWLIST = {
+    "agentops.validate-profiles": {
+        "command_class": "validation_only",
+        "argv": [sys.executable, "scripts/hermes-agentops", "validate", "-v"],
+    }
+}
+
+
+def load_yaml(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def utc_now_compact() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def hash_tree(path: Path) -> str:
+    digest = hashlib.sha256()
+    if not path.exists():
+        digest.update(b"<missing>")
+        return digest.hexdigest()
+    for file_path in sorted(item for item in path.rglob("*") if item.is_file()):
+        relative = file_path.relative_to(path).as_posix()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(file_path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def validate_copy_source(path: Path) -> None:
+    for item in path.rglob("*"):
+        rel_parts = item.relative_to(path).parts
+        if item.is_symlink():
+            raise RuntimeError(f"refusing to copy symlink: {item}")
+        if any(part in FORBIDDEN_PATH_PARTS for part in rel_parts):
+            raise RuntimeError(f"refusing to copy runtime path: {item}")
+        if item.name in FORBIDDEN_FILENAMES:
+            raise RuntimeError(f"refusing to copy secret/runtime file: {item}")
+
+
+def copy_workspace(root: Path, sandbox: Path) -> None:
+    for dirname in COPY_DIRS:
+        source = root / dirname
+        if not source.exists():
+            continue
+        validate_copy_source(source)
+        shutil.copytree(source, sandbox / dirname, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+
+
+def validate_structured_command(root: Path, record_path: Path) -> tuple[int, str]:
+    checker = DEFAULT_ROOT / "scripts" / "check-structured-command"
+    process = subprocess.run(
+        [sys.executable, str(checker), "--root", str(root), str(record_path)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    return process.returncode, process.stdout + process.stderr
+
+
+def validate_run_report(root: Path, report: dict[str, Any]) -> list[str]:
+    schema = load_json(root / "schemas" / "structured-command-run.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    errors: list[str] = []
+    for error in sorted(validator.iter_errors(report), key=lambda item: list(item.path)):
+        location = ".".join(str(part) for part in error.path) or "<root>"
+        errors.append(f"{location}: {error.message}")
+    return errors
+
+
+def build_report(
+    *,
+    record: dict[str, Any],
+    command_id: str,
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+    source_hash_before: str,
+    source_hash_after: str,
+) -> dict[str, Any]:
+    source_unchanged = source_hash_before == source_hash_after
+    success_codes = record.get("exit_codes", {}).get("success", [])
+    status = "success" if exit_code in success_codes and source_unchanged else "failed_closed"
+    return {
+        "schema_version": 1,
+        "command_run_id": f"{utc_now_compact()}_{command_id}_run",
+        "structured_command_id": record.get("structured_command_id"),
+        "generated_at": utc_now_iso(),
+        "generated_by": "run-structured-command-sandbox",
+        "sandbox_only": True,
+        "execution_scope": "validation_only",
+        "command_id": command_id,
+        "command_class": "validation_only",
+        "dispatch_source": "allowlisted_registry",
+        "input_argv_ignored_for_dispatch": True,
+        "exit_code": exit_code,
+        "status": status,
+        "stdout_sha256": sha256_text(stdout),
+        "stderr_sha256": sha256_text(stderr),
+        "source_profile_hash_before": source_hash_before,
+        "source_profile_hash_after": source_hash_after,
+        "source_profiles_unchanged": source_unchanged,
+        "boundaries": {
+            "does_not_authorize_apply": True,
+            "does_not_mutate_source_profiles": True,
+            "does_not_read_secret_values": True,
+            "does_not_mutate_runtime_state": True,
+            "does_not_support_mutation_or_rollback_classes": True,
+            "business_orchestration_not_authorized": True,
+        },
+    }
+
+
+def run_sandbox(root: Path, record_path: Path) -> tuple[int, dict[str, Any] | None, str]:
+    check_code, check_output = validate_structured_command(root, record_path)
+    if check_code != 0:
+        return 2, None, check_output.strip() or "structured command validation failed"
+    record = load_yaml(record_path)
+    if not isinstance(record, dict):
+        return 2, None, "structured command record must be a mapping"
+    command = record.get("command") if isinstance(record.get("command"), dict) else {}
+    command_id = command.get("command_id")
+    command_class = command.get("command_class")
+    if command_id not in ALLOWLIST:
+        return 2, None, f"command_id {command_id!r} is not allowlisted"
+    entry = ALLOWLIST[command_id]
+    if command_class != entry["command_class"]:
+        return 2, None, f"command_class {command_class!r} is not supported"
+
+    source_hash_before = hash_tree(root / "profiles")
+    with tempfile.TemporaryDirectory(prefix="hermes-structured-command-") as tmpdir:
+        sandbox = Path(tmpdir)
+        copy_workspace(root, sandbox)
+        cwd_path = record.get("working_directory", {}).get("path", ".")
+        cwd = (sandbox / cwd_path).resolve()
+        if not str(cwd).startswith(str(sandbox.resolve())):
+            return 2, None, "working directory escaped sandbox"
+        env_record = record.get("environment", {})
+        allowed = env_record.get("allowed_keys", []) if isinstance(env_record, dict) else []
+        env = {key: os.environ[key] for key in allowed if isinstance(key, str) and key in os.environ}
+        process = subprocess.run(
+            entry["argv"],
+            cwd=cwd,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=int(record.get("timeout_seconds", 60)),
+            check=False,
+        )
+    source_hash_after = hash_tree(root / "profiles")
+    report = build_report(
+        record=record,
+        command_id=str(command_id),
+        exit_code=process.returncode,
+        stdout=process.stdout,
+        stderr=process.stderr,
+        source_hash_before=source_hash_before,
+        source_hash_after=source_hash_after,
+    )
+    report_errors = validate_run_report(root, report)
+    if report_errors:
+        return 2, None, "run report validation failed: " + "; ".join(report_errors)
+    return (0 if report["status"] == "success" else 2), report, ""
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="run-structured-command-sandbox")
+    parser.add_argument("record_path")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    code, report, error = run_sandbox(root, Path(args.record_path))
+    if report is not None:
+        print(yaml.safe_dump(report, sort_keys=False), end="")
+    if error:
+        print(f"structured command sandbox runner failed: {error}", file=sys.stderr)
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
