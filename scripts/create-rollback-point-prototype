@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Create rollback point evidence for temporary repositories only.
+
+This prototype is intentionally not integrated with `hermes-agentops apply`. It
+reads an existing real-apply lock prototype record, verifies that the current Git
+state is still clean and bound to that lock, and emits rollback point evidence to
+stdout. It does not execute rollback, release locks, mutate managed profiles,
+read secrets, mutate runtime state, or authorize apply.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+LOCK_PATH = Path(".hermes-agentops") / "locks" / "real-apply.lock"
+IGNORED_GOVERNANCE_PATHS = {LOCK_PATH.as_posix()}
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def load_yaml(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+def iso(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def compact(value: datetime) -> str:
+    return value.strftime("%Y%m%dT%H%M%SZ")
+
+
+def repository_root_sha256(root: Path) -> str:
+    return sha256_text(str(root.resolve()))
+
+
+def run_git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *args], cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+
+
+def current_head(root: Path) -> str:
+    process = run_git(root, "rev-parse", "HEAD")
+    if process.returncode != 0:
+        raise RuntimeError("repository must have a valid HEAD")
+    head = process.stdout.strip()
+    if len(head) != 40 or any(char not in "0123456789abcdef" for char in head):
+        raise RuntimeError("repository HEAD must be a full lowercase SHA-1")
+    return head
+
+
+def commit_exists(root: Path, commit: str) -> bool:
+    process = run_git(root, "cat-file", "-e", f"{commit}^{{commit}}")
+    return process.returncode == 0
+
+
+def working_tree_changes(root: Path) -> list[str]:
+    process = run_git(root, "status", "--porcelain", "--untracked-files=all")
+    if process.returncode != 0:
+        raise RuntimeError("git status failed")
+    changes: list[str] = []
+    for line in process.stdout.splitlines():
+        path = line[3:] if len(line) >= 4 else line.strip()
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        if path not in IGNORED_GOVERNANCE_PATHS:
+            changes.append(line)
+    return changes
+
+
+def boundaries() -> dict[str, bool]:
+    return {
+        "temporary_repository_only": True,
+        "does_not_execute_rollback": True,
+        "does_not_authorize_apply": True,
+        "does_not_mutate_profiles": True,
+        "does_not_release_locks": True,
+        "does_not_read_secret_values": True,
+        "does_not_mutate_runtime_state": True,
+        "business_orchestration_not_authorized": True,
+    }
+
+
+def validate_lock(root: Path, lock: Any, args: argparse.Namespace, lock_path: Path) -> dict[str, Any]:
+    if not isinstance(lock, dict):
+        raise RuntimeError("lock record must be a mapping")
+    lock_schema = load_json(DEFAULT_ROOT / "schemas" / "real-apply-lock.schema.json")
+    jsonschema.Draft202012Validator.check_schema(lock_schema)
+    lock_validator = jsonschema.Draft202012Validator(lock_schema, format_checker=jsonschema.FormatChecker())
+    errors = [
+        f"{'.'.join(str(part) for part in error.path) or '<root>'}: {error.message}"
+        for error in sorted(lock_validator.iter_errors(lock), key=lambda item: list(item.path))
+    ]
+    if errors:
+        raise RuntimeError("lock record validation failed: " + "; ".join(errors))
+    if lock.get("status") != "active":
+        raise RuntimeError("lock status must be active")
+    if lock.get("recovery_required") is not False:
+        raise RuntimeError("recovery-required lock refused")
+    if lock.get("change_id") != args.change_id:
+        raise RuntimeError("lock change_id mismatch")
+    if lock.get("operator") != args.operator:
+        raise RuntimeError("lock operator mismatch")
+    if lock.get("pre_apply_plan_sha256") != args.pre_apply_plan_sha256:
+        raise RuntimeError("lock pre_apply_plan_sha256 mismatch")
+    if lock.get("repository_root_sha256") != repository_root_sha256(root):
+        raise RuntimeError("lock repository_root_sha256 mismatch")
+    base_commit = lock.get("base_commit")
+    if not isinstance(base_commit, str) or not commit_exists(root, base_commit):
+        raise RuntimeError("lock base_commit object does not exist locally")
+    return {
+        "lock_id": lock["lock_id"],
+        "lock_sha256": sha256_file(lock_path),
+        "base_commit": base_commit,
+        "base_commit_object_exists": True,
+        "pre_apply_plan_sha256": lock["pre_apply_plan_sha256"],
+        "status": lock["status"],
+        "recovery_required": lock["recovery_required"],
+    }
+
+
+def build_evidence(root: Path, args: argparse.Namespace) -> dict[str, Any]:
+    lock_path = root / LOCK_PATH
+    if not lock_path.exists():
+        raise RuntimeError("real apply lock is missing")
+    lock_info = validate_lock(root, load_yaml(lock_path), args, lock_path)
+    head = current_head(root)
+    if not commit_exists(root, head):
+        raise RuntimeError("HEAD commit object does not exist locally")
+    if head != lock_info["base_commit"]:
+        raise RuntimeError("current HEAD differs from lock base_commit")
+    changes = working_tree_changes(root)
+    if changes:
+        raise RuntimeError("working tree is dirty: " + "; ".join(changes))
+    now = utc_now()
+    parts = args.change_id.split("_")
+    if len(parts) != 3:
+        raise RuntimeError("change_id must have timestamp_agent_digest format")
+    return {
+        "schema_version": 1,
+        "rollback_point_id": f"{compact(now)}_{parts[1]}_{parts[2]}_rollback_point_created",
+        "change_id": args.change_id,
+        "operator": args.operator,
+        "repository_root_sha256": repository_root_sha256(root),
+        "real_apply_lock": lock_info,
+        "head": {
+            "commit": head,
+            "object_exists": True,
+            "matches_lock_base_commit": True,
+        },
+        "working_tree": {
+            "clean": True,
+            "ignored_governance_paths": sorted(IGNORED_GOVERNANCE_PATHS),
+        },
+        "created_at": iso(now),
+        "created_by": "create-rollback-point-prototype",
+        "rollback_executed": False,
+        "mutation_enabled": False,
+        "apply_authorized": False,
+        "boundaries": boundaries(),
+    }
+
+
+def validate_evidence(evidence: dict[str, Any]) -> list[str]:
+    schema = load_json(DEFAULT_ROOT / "schemas" / "rollback-point-created.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    return [
+        f"{'.'.join(str(part) for part in error.path) or '<root>'}: {error.message}"
+        for error in sorted(validator.iter_errors(evidence), key=lambda item: list(item.path))
+    ]
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="create-rollback-point-prototype")
+    parser.add_argument("change_id")
+    parser.add_argument("--root", default=".")
+    parser.add_argument("--operator", required=True)
+    parser.add_argument("--pre-apply-plan-sha256", required=True)
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        evidence = build_evidence(Path(args.root).resolve(), args)
+        errors = validate_evidence(evidence)
+    except Exception as exc:
+        print(f"rollback point creation failed: {exc}", file=sys.stderr)
+        return 2
+    if errors:
+        print("rollback point evidence validation failed:", file=sys.stderr)
+        for error in errors:
+            print(f"- {error}", file=sys.stderr)
+        return 2
+    print(yaml.safe_dump(evidence, sort_keys=False), end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

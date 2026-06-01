@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/rollback-point-created.schema.json",
+  "title": "Hermes AgentOps Rollback Point Created Evidence",
+  "description": "Evidence emitted by the temporary-repository rollback point creator prototype. This schema does not enable apply, execute rollback, mutate managed profiles, release locks, read secrets, mutate runtime state, or orchestrate business work.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "rollback_point_id",
+    "change_id",
+    "operator",
+    "repository_root_sha256",
+    "real_apply_lock",
+    "head",
+    "working_tree",
+    "created_at",
+    "created_by",
+    "rollback_executed",
+    "mutation_enabled",
+    "apply_authorized",
+    "boundaries"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "rollback_point_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_rollback_point_created$"},
+    "change_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}$"},
+    "operator": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "repository_root_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "real_apply_lock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lock_id", "lock_sha256", "base_commit", "base_commit_object_exists", "pre_apply_plan_sha256", "status", "recovery_required"],
+      "properties": {
+        "lock_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_real_apply_lock$"},
+        "lock_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "base_commit": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+        "base_commit_object_exists": {"type": "boolean", "const": true},
+        "pre_apply_plan_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "status": {"type": "string", "const": "active"},
+        "recovery_required": {"type": "boolean", "const": false}
+      }
+    },
+    "head": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "object_exists", "matches_lock_base_commit"],
+      "properties": {
+        "commit": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+        "object_exists": {"type": "boolean", "const": true},
+        "matches_lock_base_commit": {"type": "boolean", "const": true}
+      }
+    },
+    "working_tree": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clean", "ignored_governance_paths"],
+      "properties": {
+        "clean": {"type": "boolean", "const": true},
+        "ignored_governance_paths": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^\\.hermes-agentops/locks/real-apply\\.lock$"}
+        }
+      }
+    },
+    "created_at": {"type": "string", "format": "date-time"},
+    "created_by": {"type": "string", "const": "create-rollback-point-prototype"},
+    "rollback_executed": {"type": "boolean", "const": false},
+    "mutation_enabled": {"type": "boolean", "const": false},
+    "apply_authorized": {"type": "boolean", "const": false},
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "temporary_repository_only",
+        "does_not_execute_rollback",
+        "does_not_authorize_apply",
+        "does_not_mutate_profiles",
+        "does_not_release_locks",
+        "does_not_read_secret_values",
+        "does_not_mutate_runtime_state",
+        "business_orchestration_not_authorized"
+      ],
+      "properties": {
+        "temporary_repository_only": {"type": "boolean", "const": true},
+        "does_not_execute_rollback": {"type": "boolean", "const": true},
+        "does_not_authorize_apply": {"type": "boolean", "const": true},
+        "does_not_mutate_profiles": {"type": "boolean", "const": true},
+        "does_not_release_locks": {"type": "boolean", "const": true},
+        "does_not_read_secret_values": {"type": "boolean", "const": true},
+        "does_not_mutate_runtime_state": {"type": "boolean", "const": true},
+        "business_orchestration_not_authorized": {"type": "boolean", "const": true}
+      }
+    }
+  }
+}
