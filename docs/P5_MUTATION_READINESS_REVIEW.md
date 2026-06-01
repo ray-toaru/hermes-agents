@@ -29,7 +29,7 @@ None of these capabilities authorize or perform real mutation.
 | --- | --- | --- | --- |
 | Authenticated approval verification | ADR 0008 | Approval YAML and identity evidence exist; authenticated approval evidence contract exists; fixture-only verifier skeleton exists, but no live GitHub or signed verifier exists. | Implement fail-closed live GitHub or signed-attestation approval verification bound to repository, change ID, diff hash, approver, decision, time, and threshold. |
 | Structured command evidence and dispatch | ADR 0009 | Audit command strings are recorded-only evidence; structured command evidence contract exists; validation-only sandbox runner exists, but no mutation, rollback, or audit-capture runner exists. | Add reviewed allowlisted dispatch for mutation-adjacent classes only after lock, rollback, audit, and recovery prerequisites converge. |
-| Real repository-scoped exclusive lock | ADR 0010 | Apply-lock files are governance records only. | Implement atomic lock acquisition/release with TTL, stale handling, failure preservation, and recovery-required state. |
+| Real repository-scoped exclusive lock | ADR 0010 | Apply-lock files are governance records only; temporary-repo atomic lock prototype exists, but it is not integrated with apply. | Integrate atomic lock acquisition/release with the future mutation pipeline, including failure preservation and recovery-required state. |
 | Rollback point creation | ADR 0010 | Rollback-point records can be validated but are not created by mutation code. | Create and verify rollback points before mutation, including Git object existence and clean-state binding. |
 | Post-apply validation execution | ADR 0011 | Post-apply validation evidence can be validated but not executed as part of apply. | Execute post-apply checks after mutation and before lock release; fail closed on any unexpected result. |
 | Mutation audit capture | ADR 0011 | Audit records are validation-only evidence. | Capture success and failure audit records with structured command evidence, heads, lock lifecycle, rollback evidence, and validation outputs. |
@@ -82,7 +82,7 @@ This review does not:
 
 - implement or enable real `apply`;
 - mutate managed profiles;
-- acquire or release real locks;
+- acquire or release real locks in the apply pipeline;
 - create rollback points;
 - execute rollback;
 - execute post-apply validation as part of mutation;

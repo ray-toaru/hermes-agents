@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/real-apply-lock.schema.json",
+  "title": "Hermes AgentOps Real Apply Lock Prototype Record",
+  "description": "Prototype repository-scoped exclusive lock record for temporary repositories only. This schema does not enable apply, mutation, rollback, secret reads, runtime mutation, or business orchestration.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "lock_id",
+    "repository_root_sha256",
+    "change_id",
+    "operator",
+    "base_commit",
+    "pre_apply_plan_sha256",
+    "acquired_at",
+    "ttl_seconds",
+    "expires_at",
+    "status",
+    "recovery_required",
+    "mutation_enabled",
+    "apply_authorized",
+    "boundaries"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "lock_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_real_apply_lock$"},
+    "repository_root_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "change_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}$"},
+    "operator": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "base_commit": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+    "pre_apply_plan_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "acquired_at": {"type": "string", "format": "date-time"},
+    "ttl_seconds": {"type": "integer", "minimum": 1, "maximum": 86400},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "status": {"type": "string", "enum": ["active", "released", "recovery_required"]},
+    "recovery_required": {"type": "boolean"},
+    "mutation_enabled": {"type": "boolean", "const": false},
+    "apply_authorized": {"type": "boolean", "const": false},
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "temporary_repository_only",
+        "does_not_authorize_apply",
+        "does_not_mutate_profiles",
+        "does_not_create_rollback_points",
+        "does_not_read_secret_values",
+        "does_not_mutate_runtime_state",
+        "expired_locks_do_not_auto_release",
+        "business_orchestration_not_authorized"
+      ],
+      "properties": {
+        "temporary_repository_only": {"type": "boolean", "const": true},
+        "does_not_authorize_apply": {"type": "boolean", "const": true},
+        "does_not_mutate_profiles": {"type": "boolean", "const": true},
+        "does_not_create_rollback_points": {"type": "boolean", "const": true},
+        "does_not_read_secret_values": {"type": "boolean", "const": true},
+        "does_not_mutate_runtime_state": {"type": "boolean", "const": true},
+        "expired_locks_do_not_auto_release": {"type": "boolean", "const": true},
+        "business_orchestration_not_authorized": {"type": "boolean", "const": true}
+      }
+    }
+  }
+}
