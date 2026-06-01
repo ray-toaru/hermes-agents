@@ -24,7 +24,8 @@ Implemented capabilities are limited to:
 - structured command evidence validation;
 - validation-only structured command sandbox execution;
 - temporary-repository atomic real apply lock prototype;
-- temporary-repository rollback point creator prototype.
+- temporary-repository rollback point creator prototype;
+- sandbox-only post-apply validation runner prototype.
 
 None of these capabilities authorize or perform real mutation.
 
@@ -36,7 +37,7 @@ None of these capabilities authorize or perform real mutation.
 | Structured command evidence and dispatch | ADR 0009 | Audit command strings are recorded-only evidence; structured command evidence contract exists; validation-only sandbox runner exists, but no mutation, rollback, or audit-capture runner exists. | Add reviewed allowlisted dispatch for mutation-adjacent classes only after lock, rollback, audit, and recovery prerequisites converge. |
 | Real repository-scoped exclusive lock | ADR 0010 | Apply-lock files are governance records only; temporary-repo atomic lock prototype exists, but it is not integrated with apply. | Integrate atomic lock acquisition/release with the future mutation pipeline, including failure preservation and recovery-required state. |
 | Rollback point creation | ADR 0010 | Rollback-point governance records can be validated; temporary-repo rollback point creator prototype exists, but it is not integrated with apply and does not execute rollback. | Integrate rollback point creation before mutation, including Git object existence, clean-state binding, and failure-safe evidence persistence. |
-| Post-apply validation execution | ADR 0011 | Post-apply validation evidence can be validated but not executed as part of apply. | Execute post-apply checks after mutation and before lock release; fail closed on any unexpected result. |
+| Post-apply validation execution | ADR 0011 | Post-apply validation evidence can be validated; sandbox-only post-apply validation runner prototype exists, but it is not integrated with apply and does not release locks. | Execute post-apply checks after mutation and before lock release; fail closed on any unexpected result. |
 | Mutation audit capture | ADR 0011 | Audit records are validation-only evidence. | Capture success and failure audit records with structured command evidence, heads, lock lifecycle, rollback evidence, and validation outputs. |
 | Failure recovery and retry rules | ADR 0011 | Recovery is manual and evidence-only. | Preserve locks on uncertainty, attempt rollback only when preconditions hold, validate rollback, and require manual review before retry. |
 
@@ -66,6 +67,10 @@ Rejected. ADR 0010 requires expired active locks to remain blocking until manual
 
 Rejected. The rollback point creator only emits pre-mutation evidence bound to an active lock and clean Git state. It does not execute rollback, release locks, authorize apply, or mutate managed profiles.
 
+### Attack: Treat sandbox post-apply validation as real post-apply validation
+
+Rejected. The sandbox post-apply validation runner mutates only a temporary copied workspace, emits evidence, and proves source profiles remain unchanged. It does not run after real apply, release locks, create audit records, or authorize mutation.
+
 ## Required Implementation Slices Before Real Mutation
 
 These should be separate reviewed PRs before any mutation command exists:
@@ -93,7 +98,7 @@ This review does not:
 - mutate managed profiles;
 - acquire or release real locks in the apply pipeline;
 - execute rollback;
-- execute post-apply validation as part of mutation;
+- execute post-apply validation as part of real mutation;
 - read real secret values;
 - mutate runtime state;
 - route or orchestrate business tasks.
