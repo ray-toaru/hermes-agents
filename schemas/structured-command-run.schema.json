@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/structured-command-run.schema.json",
+  "title": "Hermes AgentOps Structured Command Sandbox Run Evidence",
+  "description": "Evidence emitted by the validation-only structured command sandbox runner. This schema does not authorize apply, mutation, rollback, audit capture, secret reads, or runtime mutation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "command_run_id",
+    "structured_command_id",
+    "generated_at",
+    "generated_by",
+    "sandbox_only",
+    "execution_scope",
+    "command_id",
+    "command_class",
+    "dispatch_source",
+    "input_argv_ignored_for_dispatch",
+    "exit_code",
+    "status",
+    "stdout_sha256",
+    "stderr_sha256",
+    "source_profile_hash_before",
+    "source_profile_hash_after",
+    "source_profiles_unchanged",
+    "boundaries"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "command_run_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z0-9][a-z0-9_.-]{1,127}_run$"},
+    "structured_command_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}_[a-z0-9][a-z0-9_-]{1,63}_structured_command$"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "generated_by": {"type": "string", "const": "run-structured-command-sandbox"},
+    "sandbox_only": {"type": "boolean", "const": true},
+    "execution_scope": {"type": "string", "const": "validation_only"},
+    "command_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{1,127}$"},
+    "command_class": {"type": "string", "const": "validation_only"},
+    "dispatch_source": {"type": "string", "const": "allowlisted_registry"},
+    "input_argv_ignored_for_dispatch": {"type": "boolean", "const": true},
+    "exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
+    "status": {"type": "string", "enum": ["success", "failed_closed"]},
+    "stdout_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "stderr_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source_profile_hash_before": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source_profile_hash_after": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source_profiles_unchanged": {"type": "boolean", "const": true},
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "does_not_authorize_apply",
+        "does_not_mutate_source_profiles",
+        "does_not_read_secret_values",
+        "does_not_mutate_runtime_state",
+        "does_not_support_mutation_or_rollback_classes",
+        "business_orchestration_not_authorized"
+      ],
+      "properties": {
+        "does_not_authorize_apply": {"type": "boolean", "const": true},
+        "does_not_mutate_source_profiles": {"type": "boolean", "const": true},
+        "does_not_read_secret_values": {"type": "boolean", "const": true},
+        "does_not_mutate_runtime_state": {"type": "boolean", "const": true},
+        "does_not_support_mutation_or_rollback_classes": {"type": "boolean", "const": true},
+        "business_orchestration_not_authorized": {"type": "boolean", "const": true}
+      }
+    }
+  }
+}
