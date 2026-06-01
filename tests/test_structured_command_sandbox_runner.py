@@ -14,13 +14,12 @@ from test_structured_command_validator import valid_record, write_yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts" / "run-structured-command-sandbox"
-EMPTY_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 CHANGE_ID = "20260530T000000Z_agentops_aaaaaaaaaa"
 
 
 def prepare_runtime_root(tmp_path: Path) -> Path:
     root = tmp_path / "repo"
-    for name in ("schemas", "policies", "profiles", "scripts"):
+    for name in ("schemas", "policies", "profiles", "scripts", "inventory"):
         shutil.copytree(ROOT / name, root / name)
     return root
 
@@ -123,5 +122,6 @@ def test_runner_ignores_record_argv_and_uses_registry(tmp_path: Path) -> None:
     result = run_runner(root, record_path)
     assert result.returncode == 0, result.stdout + result.stderr
     report = yaml.safe_load(result.stdout)
+    assert report["status"] == "success"
     assert report["input_argv_ignored_for_dispatch"] is True
-    assert report["stdout_sha256"] != EMPTY_SHA
+    assert report["command_id"] == "agentops.validate-profiles"

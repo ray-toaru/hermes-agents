@@ -28,7 +28,7 @@ import yaml
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 FORBIDDEN_PATH_PARTS = {".git", "logs", "sessions", "workspace", "workspaces", "runtime"}
 FORBIDDEN_FILENAMES = {".env", "secrets.json", "state.db"}
-COPY_DIRS = ("profiles", "policies", "schemas", "scripts")
+COPY_DIRS = ("profiles", "policies", "schemas", "scripts", "inventory")
 ALLOWLIST = {
     "agentops.validate-profiles": {
         "command_class": "validation_only",
