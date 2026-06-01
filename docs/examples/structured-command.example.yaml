@@ -1,0 +1,53 @@
+schema_version: 1
+structured_command_id: agentops_validate_profiles_structured_command
+created_at: "2026-05-31T00:00:00Z"
+created_by: fixture-contract-only
+execution_enabled: false
+apply_authorized: false
+command:
+  command_id: agentops.validate-profiles
+  command_class: validation_only
+  argv:
+    - python
+    - scripts/hermes-agentops
+    - validate
+    - -v
+  shell_allowed: false
+working_directory:
+  base: repository_root
+  path: .
+environment:
+  allowed_keys:
+    - PYTHONPATH
+  forbidden_keys:
+    - AWS_SECRET_ACCESS_KEY
+    - GITHUB_TOKEN
+    - HERMES_SECRET
+    - OPENAI_API_KEY
+  inherit_parent_environment: false
+paths:
+  read:
+    - profiles
+    - policies
+    - schemas
+    - scripts/hermes-agentops
+  write: []
+timeout_seconds: 120
+redaction:
+  secret_values_must_be_redacted: true
+  capture_stdout: true
+  capture_stderr: true
+exit_codes:
+  success:
+    - 0
+  failure_is_terminal: true
+output_capture:
+  stdout_sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  stderr_sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  combined_redacted_summary_required: true
+boundaries:
+  does_not_execute_commands: true
+  does_not_authorize_apply: true
+  does_not_read_secret_values: true
+  does_not_mutate_profiles_or_runtime: true
+  business_orchestration_not_authorized: true

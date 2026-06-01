@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/structured-command.schema.json",
+  "title": "Hermes AgentOps Structured Command Evidence",
+  "description": "Read-only evidence contract for future execution-adjacent commands. This schema does not execute commands, authorize apply, mutate profiles, read secrets, or touch runtime state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "structured_command_id",
+    "created_at",
+    "created_by",
+    "execution_enabled",
+    "apply_authorized",
+    "command",
+    "working_directory",
+    "environment",
+    "paths",
+    "timeout_seconds",
+    "redaction",
+    "exit_codes",
+    "output_capture",
+    "boundaries"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "structured_command_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}_[a-z0-9][a-z0-9_-]{1,63}_structured_command$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "created_by": {"type": "string", "minLength": 1},
+    "execution_enabled": {"type": "boolean", "const": false},
+    "apply_authorized": {"type": "boolean", "const": false},
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command_id", "command_class", "argv", "shell_allowed"],
+      "properties": {
+        "command_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{1,127}$"},
+        "command_class": {"type": "string", "enum": ["validation_only", "mutation", "rollback", "audit_capture"]},
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "shell_allowed": {"type": "boolean", "const": false}
+      }
+    },
+    "working_directory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base", "path"],
+      "properties": {
+        "base": {"type": "string", "const": "repository_root"},
+        "path": {"type": "string", "minLength": 1}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_keys", "forbidden_keys", "inherit_parent_environment"],
+      "properties": {
+        "allowed_keys": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$"},
+          "uniqueItems": true
+        },
+        "forbidden_keys": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$"},
+          "uniqueItems": true
+        },
+        "inherit_parent_environment": {"type": "boolean", "const": false}
+      }
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["read", "write"],
+      "properties": {
+        "read": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "write": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+      }
+    },
+    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600},
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["secret_values_must_be_redacted", "capture_stdout", "capture_stderr"],
+      "properties": {
+        "secret_values_must_be_redacted": {"type": "boolean", "const": true},
+        "capture_stdout": {"type": "boolean"},
+        "capture_stderr": {"type": "boolean"}
+      }
+    },
+    "exit_codes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["success", "failure_is_terminal"],
+      "properties": {
+        "success": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 0, "maximum": 255}, "uniqueItems": true},
+        "failure_is_terminal": {"type": "boolean", "const": true}
+      }
+    },
+    "output_capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stdout_sha256", "stderr_sha256", "combined_redacted_summary_required"],
+      "properties": {
+        "stdout_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "stderr_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "combined_redacted_summary_required": {"type": "boolean", "const": true}
+      }
+    },
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "does_not_execute_commands",
+        "does_not_authorize_apply",
+        "does_not_read_secret_values",
+        "does_not_mutate_profiles_or_runtime",
+        "business_orchestration_not_authorized"
+      ],
+      "properties": {
+        "does_not_execute_commands": {"type": "boolean", "const": true},
+        "does_not_authorize_apply": {"type": "boolean", "const": true},
+        "does_not_read_secret_values": {"type": "boolean", "const": true},
+        "does_not_mutate_profiles_or_runtime": {"type": "boolean", "const": true},
+        "business_orchestration_not_authorized": {"type": "boolean", "const": true}
+      }
+    }
+  }
+}
