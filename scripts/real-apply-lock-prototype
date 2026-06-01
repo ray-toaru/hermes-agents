@@ -1,0 +1,285 @@
+#!/usr/bin/env python3
+"""Prototype atomic repository-scoped apply lock for temporary repositories.
+
+This script is intentionally not integrated with `hermes-agentops apply`. It
+only exercises lock acquire/release/recovery semantics in temporary test
+repositories. Expired locks remain blocking until manual handling; recovery
+required locks are preserved and cannot be released by this prototype.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+LOCK_PATH = Path(".hermes-agentops") / "locks" / "real-apply.lock"
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def load_yaml(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def write_yaml_fd(fd: int, data: Any) -> None:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        yaml.safe_dump(data, handle, sort_keys=False)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+def iso(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def compact(value: datetime) -> str:
+    return value.strftime("%Y%m%dT%H%M%SZ")
+
+
+def parse_time(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else None
+
+
+def repository_root_sha256(root: Path) -> str:
+    return sha256_text(str(root.resolve()))
+
+
+def current_head(root: Path) -> str:
+    process = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if process.returncode != 0:
+        raise RuntimeError("repository must have a valid HEAD")
+    head = process.stdout.strip()
+    if len(head) != 40 or any(char not in "0123456789abcdef" for char in head):
+        raise RuntimeError("repository HEAD must be a full lowercase SHA-1")
+    return head
+
+
+def lock_file(root: Path) -> Path:
+    return root / LOCK_PATH
+
+
+def boundaries() -> dict[str, bool]:
+    return {
+        "temporary_repository_only": True,
+        "does_not_authorize_apply": True,
+        "does_not_mutate_profiles": True,
+        "does_not_create_rollback_points": True,
+        "does_not_read_secret_values": True,
+        "does_not_mutate_runtime_state": True,
+        "expired_locks_do_not_auto_release": True,
+        "business_orchestration_not_authorized": True,
+    }
+
+
+def build_lock(args: argparse.Namespace, root: Path, now: datetime) -> dict[str, Any]:
+    expires_at = now + timedelta(seconds=args.ttl_seconds)
+    return {
+        "schema_version": 1,
+        "lock_id": f"{compact(now)}_{args.change_id.split('_')[1]}_{args.change_id.split('_')[2]}_real_apply_lock",
+        "repository_root_sha256": repository_root_sha256(root),
+        "change_id": args.change_id,
+        "operator": args.operator,
+        "base_commit": args.base_commit or current_head(root),
+        "pre_apply_plan_sha256": args.pre_apply_plan_sha256,
+        "acquired_at": iso(now),
+        "ttl_seconds": args.ttl_seconds,
+        "expires_at": iso(expires_at),
+        "status": "active",
+        "recovery_required": False,
+        "mutation_enabled": False,
+        "apply_authorized": False,
+        "boundaries": boundaries(),
+    }
+
+
+def validate_record(root: Path, record: dict[str, Any]) -> list[str]:
+    schema = load_json(DEFAULT_ROOT / "schemas" / "real-apply-lock.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    errors = [f"{'.'.join(str(part) for part in error.path) or '<root>'}: {error.message}" for error in sorted(validator.iter_errors(record), key=lambda item: list(item.path))]
+    if record.get("repository_root_sha256") != repository_root_sha256(root):
+        errors.append("repository_root_sha256 does not match root")
+    if record.get("status") == "recovery_required" and record.get("recovery_required") is not True:
+        errors.append("recovery_required status must set recovery_required true")
+    if record.get("status") == "active" and record.get("recovery_required") is not False:
+        errors.append("active status must set recovery_required false")
+    return errors
+
+
+def existing_lock_error(root: Path) -> str:
+    path = lock_file(root)
+    if not path.exists():
+        return ""
+    try:
+        record = load_yaml(path)
+    except Exception:
+        return "existing lock is unreadable; manual recovery required"
+    expires = parse_time(record.get("expires_at") if isinstance(record, dict) else None)
+    now = utc_now()
+    state = "expired" if expires and expires <= now else "active"
+    status = record.get("status") if isinstance(record, dict) else "unknown"
+    change = record.get("change_id") if isinstance(record, dict) else "unknown"
+    return f"existing {state} lock blocks acquisition: status={status!r} change_id={change!r}"
+
+
+def cmd_acquire(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    path = lock_file(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        print(existing_lock_error(root), file=sys.stderr)
+        return 2
+    record = build_lock(args, root, utc_now())
+    errors = validate_record(root, record)
+    if errors:
+        for error in errors:
+            print(error, file=sys.stderr)
+        return 2
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        print(existing_lock_error(root), file=sys.stderr)
+        return 2
+    write_yaml_fd(fd, record)
+    print(yaml.safe_dump(record, sort_keys=False), end="")
+    return 0
+
+
+def cmd_inspect(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    path = lock_file(root)
+    if not path.exists():
+        print("no real apply lock present", file=sys.stderr)
+        return 1
+    record = load_yaml(path)
+    if not isinstance(record, dict):
+        print("lock record must be a mapping", file=sys.stderr)
+        return 2
+    errors = validate_record(root, record)
+    if errors:
+        for error in errors:
+            print(error, file=sys.stderr)
+        return 2
+    print(yaml.safe_dump(record, sort_keys=False), end="")
+    return 0
+
+
+def cmd_mark_recovery(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    path = lock_file(root)
+    if not path.exists():
+        print("no real apply lock present", file=sys.stderr)
+        return 2
+    record = load_yaml(path)
+    if not isinstance(record, dict):
+        print("lock record must be a mapping", file=sys.stderr)
+        return 2
+    if record.get("change_id") != args.change_id or record.get("operator") != args.operator:
+        print("lock ownership mismatch; recovery mark refused", file=sys.stderr)
+        return 2
+    record["status"] = "recovery_required"
+    record["recovery_required"] = True
+    errors = validate_record(root, record)
+    if errors:
+        for error in errors:
+            print(error, file=sys.stderr)
+        return 2
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(yaml.safe_dump(record, sort_keys=False), encoding="utf-8")
+    tmp.replace(path)
+    print(yaml.safe_dump(record, sort_keys=False), end="")
+    return 0
+
+
+def cmd_release(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    path = lock_file(root)
+    if not path.exists():
+        print("no real apply lock present", file=sys.stderr)
+        return 2
+    record = load_yaml(path)
+    if not isinstance(record, dict):
+        print("lock record must be a mapping", file=sys.stderr)
+        return 2
+    errors = validate_record(root, record)
+    if errors:
+        for error in errors:
+            print(error, file=sys.stderr)
+        return 2
+    if record.get("change_id") != args.change_id or record.get("operator") != args.operator:
+        print("lock ownership mismatch; release refused", file=sys.stderr)
+        return 2
+    if record.get("recovery_required") is True or record.get("status") == "recovery_required":
+        print("recovery-required lock is preserved; release refused", file=sys.stderr)
+        return 2
+    record["status"] = "released"
+    path.unlink()
+    print(yaml.safe_dump(record, sort_keys=False), end="")
+    return 0
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="real-apply-lock-prototype")
+    parser.add_argument("--root", default=".")
+    subcommands = parser.add_subparsers(dest="cmd", required=True)
+
+    acquire = subcommands.add_parser("acquire")
+    acquire.add_argument("change_id")
+    acquire.add_argument("--operator", required=True)
+    acquire.add_argument("--pre-apply-plan-sha256", required=True)
+    acquire.add_argument("--base-commit")
+    acquire.add_argument("--ttl-seconds", type=int, default=900)
+    acquire.set_defaults(func=cmd_acquire)
+
+    release = subcommands.add_parser("release")
+    release.add_argument("change_id")
+    release.add_argument("--operator", required=True)
+    release.set_defaults(func=cmd_release)
+
+    inspect = subcommands.add_parser("inspect")
+    inspect.set_defaults(func=cmd_inspect)
+
+    mark_recovery = subcommands.add_parser("mark-recovery")
+    mark_recovery.add_argument("change_id")
+    mark_recovery.add_argument("--operator", required=True)
+    mark_recovery.set_defaults(func=cmd_mark_recovery)
+
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
