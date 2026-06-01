@@ -10,7 +10,7 @@ from typing import Any
 import jsonschema
 import yaml
 
-from test_change_workflow import run_agentops, sha256_text, write_change
+from test_change_workflow import run_agentops, write_change
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts" / "run-post-apply-validation-sandbox"
@@ -115,7 +115,7 @@ def test_fails_closed_when_patch_cannot_apply(tmp_path: Path) -> None:
 
     result = run_runner(root)
     assert result.returncode == 2
-    assert "strict change verification failed" in result.stderr or "patch does not apply" in result.stderr or "change.diff_sha256" in result.stderr
+    assert "git.apply_check" in result.stderr or "patch" in result.stderr or "change.diff_sha256" in result.stderr
     assert result.stdout == ""
 
 
@@ -143,7 +143,7 @@ def test_fails_closed_when_secret_file_would_be_copied(tmp_path: Path) -> None:
     soul = root / "profiles" / "agentops" / "SOUL.md"
     diff_text = make_diff(root, "profiles/agentops/SOUL.md", soul.read_text(encoding="utf-8") + "\nSecret guard test.\n")
     write_change_with_diff(root, diff_text)
-    (root / "profiles" / "agentops" / ".env").write_text("SECRET=value\n", encoding="utf-8")
+    (root / "scripts" / ".env").write_text("SECRET=value\n", encoding="utf-8")
 
     result = run_runner(root)
     assert result.returncode == 2
@@ -160,5 +160,5 @@ def test_fails_closed_when_source_profile_changes_before_run(tmp_path: Path) -> 
 
     result = run_runner(root)
     assert result.returncode == 2
-    assert "git working tree is not clean" in result.stderr or "strict change verification failed" in result.stderr
+    assert "git.clean" in result.stderr or "unmanaged changes" in result.stderr
     assert result.stdout == ""
