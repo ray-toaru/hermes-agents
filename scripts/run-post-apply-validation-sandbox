@@ -239,8 +239,8 @@ def run_validation(root: Path, change_id: str) -> tuple[int, dict[str, Any] | No
     agent = proposal.get("agent")
     if not isinstance(agent, str) or not agent:
         return 2, None, "proposal.agent must be a non-empty string"
-    source_profile = root / "profiles" / agent
-    source_profile_hash_before = hash_tree(source_profile)
+    source_profiles = root / "profiles"
+    source_profile_hash_before = hash_tree(source_profiles)
     validation_commands: list[dict[str, Any]] = []
     sandbox_patch_applied = False
 
@@ -265,7 +265,7 @@ def run_validation(root: Path, change_id: str) -> tuple[int, dict[str, Any] | No
     except Exception as exc:
         return 2, None, str(exc)
 
-    source_profile_hash_after = hash_tree(source_profile)
+    source_profile_hash_after = hash_tree(source_profiles)
     report = build_report(
         change_id=change_id,
         agent=agent,
