@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Validate structured command evidence records.
+
+This checker is intentionally read-only. It validates future execution-adjacent
+command evidence contracts, but it does not execute commands, authorize apply,
+read secrets, mutate profiles, mutate runtime state, or orchestrate business
+workflows.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+SENSITIVE_ENV_RE = re.compile(r"(SECRET|TOKEN|PASSWORD|KEY|CREDENTIAL|AUTH)")
+FORBIDDEN_PATH_PARTS = {"logs", "sessions", "workspaces", "runtime", ".git"}
+FORBIDDEN_FILENAMES = {".env", "secrets.json", "state.db"}
+SHELL_METACHARS = set("|&;<>`$(){}[]*?!\\\n")
+CURRENTLY_ALLOWED_CLASSES = {"validation_only"}
+
+
+def load_yaml(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def validate_relative_path(value: Any, label: str) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(value, str):
+        return errors
+    candidate = Path(value)
+    if candidate.is_absolute():
+        errors.append(f"{label}: absolute paths are not allowed")
+    if ".." in candidate.parts:
+        errors.append(f"{label}: traversal paths are not allowed")
+    if any(part in FORBIDDEN_PATH_PARTS for part in candidate.parts):
+        errors.append(f"{label}: secret/runtime path parts are not allowed")
+    if candidate.name in FORBIDDEN_FILENAMES:
+        errors.append(f"{label}: secret/runtime filenames are not allowed")
+    return errors
+
+
+def validate_record(record: Any, path: Path, validator: jsonschema.Draft202012Validator) -> list[str]:
+    errors: list[str] = []
+    for error in sorted(validator.iter_errors(record), key=lambda item: list(item.path)):
+        location = ".".join(str(part) for part in error.path) or "<root>"
+        errors.append(f"{path}: {location}: {error.message}")
+    if not isinstance(record, dict):
+        return errors
+
+    if record.get("execution_enabled") is not False:
+        errors.append(f"{path}: execution_enabled must remain false")
+    if record.get("apply_authorized") is not False:
+        errors.append(f"{path}: apply_authorized must remain false")
+
+    command = record.get("command") if isinstance(record.get("command"), dict) else {}
+    if command.get("command_class") not in CURRENTLY_ALLOWED_CLASSES:
+        errors.append(f"{path}: command_class must remain validation_only until a runner design is reviewed")
+    if command.get("shell_allowed") is not False:
+        errors.append(f"{path}: shell_allowed must remain false")
+    argv = command.get("argv") if isinstance(command.get("argv"), list) else []
+    for index, arg in enumerate(argv):
+        if isinstance(arg, str) and any(char in SHELL_METACHARS for char in arg):
+            errors.append(f"{path}: command.argv[{index}] contains shell metacharacters")
+
+    cwd = record.get("working_directory") if isinstance(record.get("working_directory"), dict) else {}
+    errors.extend(validate_relative_path(cwd.get("path"), f"{path}: working_directory.path"))
+
+    environment = record.get("environment") if isinstance(record.get("environment"), dict) else {}
+    allowed_keys = environment.get("allowed_keys") if isinstance(environment.get("allowed_keys"), list) else []
+    forbidden_keys = set(environment.get("forbidden_keys") if isinstance(environment.get("forbidden_keys"), list) else [])
+    for key in allowed_keys:
+        if isinstance(key, str) and SENSITIVE_ENV_RE.search(key):
+            errors.append(f"{path}: sensitive environment key must not be allowed: {key}")
+        if key in forbidden_keys:
+            errors.append(f"{path}: environment key cannot be both allowed and forbidden: {key}")
+    if environment.get("inherit_parent_environment") is not False:
+        errors.append(f"{path}: inherit_parent_environment must remain false")
+
+    paths = record.get("paths") if isinstance(record.get("paths"), dict) else {}
+    for access in ("read", "write"):
+        values = paths.get(access) if isinstance(paths.get(access), list) else []
+        for index, value in enumerate(values):
+            errors.extend(validate_relative_path(value, f"{path}: paths.{access}[{index}]"))
+    if paths.get("write"):
+        errors.append(f"{path}: write paths must remain empty until a runner design is reviewed")
+
+    output_capture = record.get("output_capture") if isinstance(record.get("output_capture"), dict) else {}
+    if not output_capture.get("stdout_sha256") or not output_capture.get("stderr_sha256"):
+        errors.append(f"{path}: output hashes are required")
+
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="check-structured-command")
+    parser.add_argument("record_paths", nargs="*")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    default_record = root / "docs" / "examples" / "structured-command.example.yaml"
+    record_paths = [Path(value) for value in args.record_paths] if args.record_paths else [default_record]
+    schema = load_json(root / "schemas" / "structured-command.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    errors: list[str] = []
+    for record_path in record_paths:
+        errors.extend(validate_record(load_yaml(record_path), record_path, validator))
+    if errors:
+        print("structured command validation failed:")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+    print("structured command validation passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
