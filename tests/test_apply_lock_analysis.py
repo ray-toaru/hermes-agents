@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from agentops_test_utils import run_script
 
 ROOT = Path(__file__).resolve().parents[1]
 ANALYZER = ROOT / "scripts" / "analyze-apply-locks"
@@ -13,13 +14,7 @@ NOW = "2026-05-30T00:00:00Z"
 
 
 def run_analyzer(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["python", str(ANALYZER), "--root", str(root), *args],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    return run_script(ANALYZER, "--root", str(root), *args)
 
 
 def write_yaml(path: Path, data: dict[str, Any]) -> Path:

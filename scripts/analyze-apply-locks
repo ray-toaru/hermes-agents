@@ -17,32 +17,13 @@ from typing import Any
 import jsonschema
 import yaml
 
+from agentops_common import load_yaml, load_json, parse_date_time, agent_from_change_id
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 BLOCKING_STATUSES = {"active", "stale", "recovery_required"}
 
-
-def load_yaml(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
-
-
-def load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def parse_date_time(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-
-def agent_from_change_id(change_id: str) -> str | None:
-    parts = change_id.split("_")
-    return parts[1] if len(parts) == 3 else None
-
-
 def iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
 
 def validate_report(root: Path, report: Any, path: Path, validator: jsonschema.Draft202012Validator) -> list[str]:
     errors: list[str] = []
@@ -63,7 +44,6 @@ def validate_report(root: Path, report: Any, path: Path, validator: jsonschema.D
     if isinstance(summary, dict) and summary.get("has_blocking_locks") != (blocking_count > 0):
         errors.append(f"{path}: summary.has_blocking_locks does not match blocking_count")
     return errors
-
 
 def classify_lock(root: Path, path: Path, lock_schema_validator: jsonschema.Draft202012Validator, now: datetime) -> dict[str, Any]:
     relative_path = path.relative_to(root).as_posix()
@@ -143,7 +123,6 @@ def classify_lock(root: Path, path: Path, lock_schema_validator: jsonschema.Draf
         "reason": reason,
     }
 
-
 def build_report(root: Path, now: datetime, generated_at: str) -> dict[str, Any]:
     lock_schema = load_json(root / "schemas" / "apply-lock.schema.json")
     lock_schema_validator = jsonschema.Draft202012Validator(lock_schema, format_checker=jsonschema.FormatChecker())
@@ -169,7 +148,6 @@ def build_report(root: Path, now: datetime, generated_at: str) -> dict[str, Any]
         },
     }
 
-
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="analyze-apply-locks")
     parser.add_argument("--root", default=str(DEFAULT_ROOT))
@@ -177,7 +155,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--validate-report", action="store_true")
     parser.add_argument("record_paths", nargs="*")
     return parser.parse_args(argv)
-
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
@@ -211,7 +188,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(yaml.safe_dump(report, sort_keys=False), end="")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 
 from test_change_workflow import init_git_profile, prepare_root, run_agentops, write_change
+from agentops_test_utils import run_script
 
 ROOT = Path(__file__).resolve().parents[1]
 DRY_RUN = ROOT / "scripts" / "sandbox-apply-dry-run"
@@ -13,13 +14,7 @@ CHANGE_ID = "20260530T000000Z_agentops_aaaaaaaaaa"
 
 
 def run_dry_run(root: Path, change_id: str = CHANGE_ID) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["python", str(DRY_RUN), change_id, "--root", str(root)],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    return run_script(DRY_RUN, change_id, "--root", str(root))
 
 
 def test_sandbox_apply_dry_run_applies_patch_only_in_sandbox(tmp_path: Path) -> None:

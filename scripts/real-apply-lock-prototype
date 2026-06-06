@@ -10,10 +10,7 @@ required locks are preserved and cannot be released by this prototype.
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
 import os
-import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -22,18 +19,10 @@ from typing import Any
 import jsonschema
 import yaml
 
+from agentops_common import load_json, load_yaml, run_command, sha256_text
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 LOCK_PATH = Path(".hermes-agentops") / "locks" / "real-apply.lock"
-
-
-def load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def load_yaml(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
 
 
 def write_yaml_fd(fd: int, data: Any) -> None:
@@ -42,9 +31,6 @@ def write_yaml_fd(fd: int, data: Any) -> None:
         handle.flush()
         os.fsync(handle.fileno())
 
-
-def sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def utc_now() -> datetime:
@@ -74,7 +60,7 @@ def repository_root_sha256(root: Path) -> str:
 
 
 def current_head(root: Path) -> str:
-    process = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    process = run_command(["git", "rev-parse", "HEAD"], root)
     if process.returncode != 0:
         raise RuntimeError("repository must have a valid HEAD")
     head = process.stdout.strip()

@@ -11,6 +11,7 @@ import jsonschema
 import yaml
 
 from test_change_workflow import run_agentops, write_change
+from agentops_test_utils import run_script
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts" / "run-post-apply-validation-sandbox"
@@ -53,13 +54,7 @@ def write_change_with_diff(root: Path, diff_text: str) -> str:
 
 
 def run_runner(root: Path, change_id: str = CHANGE_ID) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["python", str(RUNNER), change_id, "--root", str(root)],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    return run_script(RUNNER, change_id, "--root", str(root))
 
 
 def validate_report(root: Path, report: dict[str, Any]) -> None:

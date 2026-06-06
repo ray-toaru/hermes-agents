@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/signed-approval-attestation.schema.json",
+  "title": "Hermes AgentOps Signed Approval Attestation",
+  "description": "A local Ed25519-signed approval or rejection attestation consumed by the read-only authenticated approval verifier. The signed payload is verified against reviewed public trust roots and does not authorize apply.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "payload", "signature"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attestation_id",
+        "repository",
+        "change_id",
+        "agent",
+        "diff_sha256",
+        "approver",
+        "identity_provider",
+        "identity_subject",
+        "decision",
+        "signed_at",
+        "signer_key_id",
+        "evidence_ref"
+      ],
+      "properties": {
+        "attestation_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_[a-z][a-z0-9-]{1,62}_(approve|reject)_attestation$"},
+        "repository": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "full_name", "default_branch"],
+          "properties": {
+            "provider": {"type": "string", "const": "github"},
+            "full_name": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+            "default_branch": {"type": "string", "minLength": 1}
+          }
+        },
+        "change_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}$"},
+        "agent": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+        "diff_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "approver": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+        "identity_provider": {"type": "string", "const": "signed_attestation"},
+        "identity_subject": {"type": "string", "minLength": 1},
+        "decision": {"type": "string", "enum": ["approve", "reject"]},
+        "signed_at": {"type": "string", "format": "date-time"},
+        "signer_key_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.:-]{1,127}$"},
+        "evidence_ref": {"type": "string", "minLength": 1}
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "encoding", "value"],
+      "properties": {
+        "algorithm": {"type": "string", "const": "ed25519"},
+        "encoding": {"type": "string", "const": "base64"},
+        "value": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

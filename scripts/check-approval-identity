@@ -17,6 +17,8 @@ from typing import Any
 import jsonschema
 import yaml
 
+from agentops_common import load_yaml, load_json, sha256_file, agent_from_change_id
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 SUPPORTED_METHOD_PROVIDERS = {
     "github_review": "github",
@@ -24,29 +26,8 @@ SUPPORTED_METHOD_PROVIDERS = {
     "signed_external_attestation": "external_attestation",
 }
 
-
-def load_yaml(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
-
-
-def load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def agent_from_change_id(change_id: str) -> str | None:
-    parts = change_id.split("_")
-    return parts[1] if len(parts) == 3 else None
-
-
 def expected_identity_id(change_id: str, approver: str) -> str:
     return f"{change_id}_{approver}_identity"
-
 
 def find_matching_approval(root: Path, change_id: str, approver: str, expected_hash: str, diff_sha256: str | None) -> tuple[bool, list[str]]:
     errors: list[str] = []
@@ -70,7 +51,6 @@ def find_matching_approval(root: Path, change_id: str, approver: str, expected_h
             errors.append(f"matching approval record diff_sha256 mismatch: {approval_path.relative_to(root)}")
         return not errors, errors
     return False, [f"approval_record_sha256 does not match any approval file under {approvals_dir.relative_to(root)}"]
-
 
 def validate_record(root: Path, record: Any, path: Path, validator: jsonschema.Draft202012Validator, *, require_approval_file: bool) -> list[str]:
     errors: list[str] = []
@@ -118,14 +98,12 @@ def validate_record(root: Path, record: Any, path: Path, validator: jsonschema.D
 
     return errors
 
-
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="check-approval-identity")
     parser.add_argument("record_paths", nargs="*")
     parser.add_argument("--root", default=str(DEFAULT_ROOT))
     parser.add_argument("--require-approval-file", action="store_true")
     return parser.parse_args(argv)
-
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
@@ -145,7 +123,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print("approval identity validation passed")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

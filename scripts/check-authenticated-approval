@@ -18,18 +18,9 @@ from typing import Any
 import jsonschema
 import yaml
 
+from agentops_common import load_yaml, load_json, agent_from_change_id
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
-
-
-def load_yaml(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
-
-
-def load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
 
 def parse_time(value: Any) -> datetime | None:
     if not isinstance(value, str):
@@ -40,15 +31,8 @@ def parse_time(value: Any) -> datetime | None:
         return None
     return parsed if parsed.tzinfo else None
 
-
-def agent_from_change_id(change_id: str) -> str | None:
-    parts = change_id.split("_")
-    return parts[1] if len(parts) == 3 else None
-
-
 def expected_record_id(change_id: str) -> str:
     return f"{change_id}_authenticated_approval"
-
 
 def validate_record(record: Any, path: Path, validator: jsonschema.Draft202012Validator) -> list[str]:
     errors: list[str] = []
@@ -105,13 +89,11 @@ def validate_record(record: Any, path: Path, validator: jsonschema.Draft202012Va
 
     return errors
 
-
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="check-authenticated-approval")
     parser.add_argument("record_paths", nargs="*")
     parser.add_argument("--root", default=str(DEFAULT_ROOT))
     return parser.parse_args(argv)
-
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
@@ -131,7 +113,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print("authenticated approval validation passed")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

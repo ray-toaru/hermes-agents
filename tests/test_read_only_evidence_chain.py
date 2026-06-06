@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 from test_change_workflow import init_git_profile, prepare_root, run_agentops, run_verify, write_change
+from agentops_test_utils import run_script
 
 ROOT = Path(__file__).resolve().parents[1]
 GENERATE_PLAN = ROOT / "scripts" / "generate-pre-apply-plan"
@@ -28,14 +29,8 @@ def write_yaml(path: Path, data: dict[str, Any]) -> Path:
     return path
 
 
-def run_script(script: Path, root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["python", str(script), *args, "--root", str(root)],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+def run_agentops_script(script: Path, root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return run_script(script, *args, "--root", str(root))
 
 
 def build_approval_identity(root: Path, change_id: str, approver: str) -> Path:
@@ -197,21 +192,15 @@ def test_read_only_evidence_chain_blocks_before_mutation(tmp_path: Path) -> None
     verify = run_verify(root, change_id, "--check-git-clean", "--check-patch-applicable")
     assert verify.returncode == 0, verify.stdout + verify.stderr
 
-    plan = run_script(GENERATE_PLAN, root, change_id)
+    plan = run_agentops_script(GENERATE_PLAN, root, change_id)
     assert plan.returncode == 0, plan.stdout + plan.stderr
     assert (root / "changes" / change_id / "pre-apply-plan.yaml").exists()
 
-    lock = run_script(ACQUIRE_LOCK, root, change_id, "--created-by", "pytest")
+    lock = run_agentops_script(ACQUIRE_LOCK, root, change_id, "--created-by", "pytest")
     assert lock.returncode == 0, lock.stdout + lock.stderr
     assert (root / "changes" / change_id / "apply-lock.yaml").exists()
 
-    analysis = subprocess.run(
-        ["python", str(ANALYZE_LOCKS), "--root", str(root), "--now", NOW],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    analysis = run_agentops_script(ANALYZE_LOCKS, root, "--now", NOW)
     assert analysis.returncode == 0, analysis.stdout + analysis.stderr
     lock_analysis_path = root / "changes" / change_id / "apply-lock-analysis.yaml"
     lock_analysis_path.write_text(analysis.stdout, encoding="utf-8")
@@ -220,23 +209,11 @@ def test_read_only_evidence_chain_blocks_before_mutation(tmp_path: Path) -> None
     assert analysis_report["summary"]["does_not_release_locks"] is True
 
     approval_identity_path = build_approval_identity(root, change_id, "reviewer-1")
-    approval_identity = subprocess.run(
-        ["python", str(CHECK_APPROVAL_IDENTITY), "--root", str(root), str(approval_identity_path), "--require-approval-file"],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    approval_identity = run_agentops_script(CHECK_APPROVAL_IDENTITY, root, str(approval_identity_path), "--require-approval-file")
     assert approval_identity.returncode == 0, approval_identity.stdout + approval_identity.stderr
 
     readiness_path = build_readiness_report(root, change_id, approval_identity_path, lock_analysis_path)
-    readiness = subprocess.run(
-        ["python", str(CHECK_READINESS), "--root", str(root), str(readiness_path), "--require-evidence-files"],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    readiness = run_agentops_script(CHECK_READINESS, root, str(readiness_path), "--require-evidence-files")
     assert readiness.returncode == 0, readiness.stdout + readiness.stderr
     readiness_report = yaml.safe_load(readiness_path.read_text(encoding="utf-8"))
     assert readiness_report["apply_authorized"] is False

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from agentops_test_utils import run_script
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKER = ROOT / "scripts" / "check-structured-command"
@@ -13,13 +14,7 @@ EMPTY_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 
 def run_checker(root: Path, record: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["python", str(CHECKER), "--root", str(root), str(record)],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    return run_script(CHECKER, "--root", str(root), str(record))
 
 
 def write_yaml(path: Path, data: dict[str, Any]) -> Path:

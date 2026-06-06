@@ -2,7 +2,7 @@
 
 ## Current Position
 
-As of v2.0, Hermes AgentOps Manager is a repository governance and evidence-validation control plane.
+As of v2.3, Hermes AgentOps Manager is a repository governance and evidence-validation control plane.
 
 Implemented capabilities are intentionally limited to:
 
@@ -12,7 +12,8 @@ Implemented capabilities are intentionally limited to:
 - canonical pre-apply plan governance-record generation;
 - canonical apply-lock governance-record generation;
 - read-only validators for rollback point, audit record, approval identity, post-apply validation, apply-lock analysis, and apply-readiness reports;
-- sandboxed apply dry-run that applies patches only inside temporary sandboxes and leaves source profiles unchanged.
+- sandboxed apply dry-run that applies patches only inside temporary sandboxes and leaves source profiles unchanged;
+- read-only signed approval attestation verification for authenticated approval evidence.
 
 `apply` remains disabled. Real locks, profile mutation, rollback execution, runtime management, secret reading, and business orchestration remain out of scope.
 
@@ -21,6 +22,13 @@ Implemented capabilities are intentionally limited to:
 ### P0: Keep project-level documentation current
 
 Every behavior-changing PR must update project-level docs when it changes implementation status, safety invariants, lifecycle states, or future-vs-current boundaries.
+
+
+### P0.5: Maintainability, fail-closed subprocess hardening, and test harness stability
+
+Status: implemented for the current subprocess-heavy scripts and test harness. See `docs/v2.1-maintainability-and-timeouts.md`, `docs/v2.2-test-harness-and-internal-dispatch.md`, and `docs/IMPLEMENTATION_MATRIX.md`.
+
+The current slices add a shared script helper, centralize argv-only subprocess execution with hard timeouts, provide in-process dispatch for reviewed repository-internal Python entry points, and reduce repeated child Python cold starts in tests. This does not enable real apply. Remaining validator helper deduplication should be handled as a separate mechanical cleanup.
 
 ### P1: Review and harden evidence semantics
 
@@ -55,7 +63,7 @@ Status: baseline ADRs added for future mutation prerequisites.
 
 Do not implement mutation until these are reviewed:
 
-1. authenticated approval verification against live GitHub or signed evidence;
+1. authenticated approval verification against signed evidence is implemented read-only; live GitHub remains optional and fail-closed;
 2. structured command evidence for execution-adjacent records;
 3. real repository lock acquisition/release, TTL, and stale recovery;
 4. rollback point creation and Git object existence checks;
@@ -78,7 +86,7 @@ Sandboxed dry-run may create temporary repositories and apply candidate patches 
 
 ### P5: Explicit non-default mutation command
 
-Status: not ready to implement. See `docs/P5_MUTATION_READINESS_REVIEW.md`.
+Status: not ready to implement. Signed approval attestation verification is now implemented as read-only evidence, but real mutation remains blocked. See `docs/P5_MUTATION_READINESS_REVIEW.md`.
 
 A real mutation command remains blocked until the ADR 0008-0011 prerequisites are implemented and validated as separate fail-closed slices.
 

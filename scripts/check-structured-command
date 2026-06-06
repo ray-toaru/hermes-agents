@@ -18,23 +18,14 @@ from typing import Any
 import jsonschema
 import yaml
 
+from agentops_common import load_yaml, load_json
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 SENSITIVE_ENV_RE = re.compile(r"(SECRET|TOKEN|PASSWORD|KEY|CREDENTIAL|AUTH)")
 FORBIDDEN_PATH_PARTS = {"logs", "sessions", "workspaces", "runtime", ".git"}
 FORBIDDEN_FILENAMES = {".env", "secrets.json", "state.db"}
 SHELL_METACHARS = set("|&;<>`$(){}[]*?!\\\n")
 CURRENTLY_ALLOWED_CLASSES = {"validation_only"}
-
-
-def load_yaml(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
-
-
-def load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
 
 def validate_relative_path(value: Any, label: str) -> list[str]:
     errors: list[str] = []
@@ -50,7 +41,6 @@ def validate_relative_path(value: Any, label: str) -> list[str]:
     if candidate.name in FORBIDDEN_FILENAMES:
         errors.append(f"{label}: secret/runtime filenames are not allowed")
     return errors
-
 
 def validate_record(record: Any, path: Path, validator: jsonschema.Draft202012Validator) -> list[str]:
     errors: list[str] = []
@@ -103,13 +93,11 @@ def validate_record(record: Any, path: Path, validator: jsonschema.Draft202012Va
 
     return errors
 
-
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="check-structured-command")
     parser.add_argument("record_paths", nargs="*")
     parser.add_argument("--root", default=str(DEFAULT_ROOT))
     return parser.parse_args(argv)
-
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
@@ -129,7 +117,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print("structured command validation passed")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/trusted-approval-signers.schema.json",
+  "title": "Hermes AgentOps Trusted Approval Signers",
+  "description": "Reviewed public trust roots for read-only signed approval attestation verification. This file stores public keys only and does not authorize apply by itself.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "trusted_signers", "boundaries"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "trusted_signers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key_id", "approver", "identity_provider", "identity_subject", "permission", "public_key"],
+        "properties": {
+          "key_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.:-]{1,127}$"},
+          "approver": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+          "identity_provider": {"type": "string", "const": "signed_attestation"},
+          "identity_subject": {"type": "string", "minLength": 1},
+          "permission": {"type": "string", "enum": ["write", "maintain", "admin"]},
+          "public_key": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["algorithm", "encoding", "value"],
+            "properties": {
+              "algorithm": {"type": "string", "const": "ed25519"},
+              "encoding": {"type": "string", "const": "raw_base64"},
+              "value": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    },
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "public_keys_only",
+        "does_not_authorize_apply",
+        "does_not_mutate_profiles_or_runtime",
+        "does_not_read_secret_values",
+        "business_orchestration_not_authorized"
+      ],
+      "properties": {
+        "public_keys_only": {"type": "boolean", "const": true},
+        "does_not_authorize_apply": {"type": "boolean", "const": true},
+        "does_not_mutate_profiles_or_runtime": {"type": "boolean", "const": true},
+        "does_not_read_secret_values": {"type": "boolean", "const": true},
+        "business_orchestration_not_authorized": {"type": "boolean", "const": true}
+      }
+    }
+  }
+}
