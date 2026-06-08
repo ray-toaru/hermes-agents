@@ -5,13 +5,17 @@ import hashlib
 import importlib.machinery
 import importlib.util
 import io
+import os
+import signal
 import sys
 import subprocess
+import threading
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 _MODULE_CACHE: dict[Path, ModuleType] = {}
+TEST_SCRIPT_TIMEOUT_SECONDS = int(os.environ.get("AGENTOPS_TEST_SCRIPT_TIMEOUT_SECONDS", os.environ.get("AGENTOPS_TEST_COMMAND_TIMEOUT_SECONDS", "60")))
 
 
 def load_script_module(script: Path) -> ModuleType:
@@ -52,11 +56,36 @@ def run_script(script: Path, *args: Any) -> subprocess.CompletedProcess[str]:
     argv = [str(arg) for arg in args]
     stdout = io.StringIO()
     stderr = io.StringIO()
-    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-        try:
-            code = module.main(argv)
-        except SystemExit as exc:
-            code = exc.code
+    code: Any = 0
+
+    class _ScriptTimeout(Exception):
+        pass
+
+    def _timeout_handler(_signum: int, _frame: Any) -> None:
+        raise _ScriptTimeout(f"test script timed out after {TEST_SCRIPT_TIMEOUT_SECONDS}s: {script} {' '.join(argv)}")
+
+    old_handler: Any = None
+    old_timer: tuple[float, float] | None = None
+    try:
+        if threading.current_thread() is threading.main_thread() and TEST_SCRIPT_TIMEOUT_SECONDS > 0:
+            old_handler = signal.getsignal(signal.SIGALRM)
+            old_timer = signal.setitimer(signal.ITIMER_REAL, TEST_SCRIPT_TIMEOUT_SECONDS)
+            signal.signal(signal.SIGALRM, _timeout_handler)
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                code = module.main(argv)
+            except SystemExit as exc:
+                code = exc.code
+    except _ScriptTimeout as exc:
+        print(f"error: {exc}", file=stderr)
+        code = 124
+    finally:
+        if old_timer is not None:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, old_handler)
+            remaining, interval = old_timer
+            if remaining > 0:
+                signal.setitimer(signal.ITIMER_REAL, remaining, interval)
     if code is None:
         returncode = 0
     elif isinstance(code, int):

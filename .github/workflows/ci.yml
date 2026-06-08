@@ -24,7 +24,7 @@ jobs:
 
       - name: Compile CLI
         run: |
-          python -m py_compile scripts/hermes-agentops scripts/check-codeowners scripts/check-pre-apply-plan scripts/generate-pre-apply-plan scripts/check-apply-lock scripts/acquire-apply-lock scripts/check-rollback-point scripts/check-audit-record scripts/check-approval-identity scripts/check-post-apply-validation scripts/analyze-apply-locks scripts/check-apply-readiness scripts/sandbox-apply-dry-run scripts/check-authenticated-approval scripts/verify-authenticated-approval scripts/check-structured-command scripts/run-structured-command-sandbox scripts/real-apply-lock-prototype scripts/create-rollback-point-prototype scripts/run-post-apply-validation-sandbox scripts/run-integrated-sandbox-mutation scripts/generate-sandbox-mutation-audit scripts/check-sandbox-mutation-audit scripts/simulate-sandbox-recovery scripts/check-sandbox-recovery-simulation
+          python -m py_compile scripts/hermes-agentops scripts/check-codeowners scripts/check-pre-apply-plan scripts/generate-pre-apply-plan scripts/check-apply-lock scripts/acquire-apply-lock scripts/check-rollback-point scripts/check-audit-record scripts/check-approval-identity scripts/check-post-apply-validation scripts/analyze-apply-locks scripts/check-apply-readiness scripts/sandbox-apply-dry-run scripts/check-authenticated-approval scripts/verify-authenticated-approval scripts/check-structured-command scripts/run-structured-command-sandbox scripts/real-apply-lock-prototype scripts/create-rollback-point-prototype scripts/run-post-apply-validation-sandbox scripts/run-integrated-sandbox-mutation scripts/generate-sandbox-mutation-audit scripts/check-sandbox-mutation-audit scripts/simulate-sandbox-recovery scripts/check-sandbox-recovery-simulation scripts/check-real-apply-readiness-review scripts/check-real-apply-design-contract
 
       - name: Validate schemas
         run: |
@@ -78,9 +78,57 @@ jobs:
         run: |
           python scripts/check-apply-readiness
 
-      - name: Run tests
+
+      - name: Validate real apply readiness review example
         run: |
-          pytest -q
+          python scripts/check-real-apply-readiness-review docs/examples/p5-real-apply-readiness-review-v2.yaml
+
+      - name: Validate real apply design contract example
+        run: |
+          python scripts/check-real-apply-design-contract docs/examples/real-apply-design-contract.yaml
+
+      - name: Run tests (governance and validators)
+        run: |
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 AGENTOPS_TEST_COMMAND_TIMEOUT_SECONDS=20 AGENTOPS_TEST_SCRIPT_TIMEOUT_SECONDS=20 timeout 180 pytest -q --basetemp=/tmp/agentops-pytest-g1 \
+            tests/test_agentops_common.py \
+            tests/test_apply_lock_acquisition.py \
+            tests/test_apply_lock_analysis.py \
+            tests/test_apply_readiness_report.py \
+            tests/test_approval_identity_validator.py \
+            tests/test_audit_record_validator.py \
+            tests/test_authenticated_approval_validator.py \
+            tests/test_authenticated_approval_verifier.py \
+            tests/test_change_workflow.py \
+            tests/test_governance_validators.py
+
+      - name: Run tests (sandbox and readiness)
+        run: |
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 AGENTOPS_TEST_COMMAND_TIMEOUT_SECONDS=20 AGENTOPS_TEST_SCRIPT_TIMEOUT_SECONDS=20 timeout 180 pytest -q --basetemp=/tmp/agentops-pytest-g2 \
+            tests/test_integrated_sandbox_mutation.py \
+            tests/test_policy_strictness.py \
+            tests/test_post_apply_validation_sandbox_runner.py \
+            tests/test_post_apply_validation_validator.py \
+            tests/test_pre_apply_plan_generation.py \
+            tests/test_read_only_evidence_chain.py \
+            tests/test_real_apply_design_contract.py \
+            tests/test_real_apply_lock_prototype.py \
+            tests/test_real_apply_readiness_review.py \
+            tests/test_rejection_status.py
+
+      - name: Run tests (rollback, audit, recovery)
+        run: |
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 AGENTOPS_TEST_COMMAND_TIMEOUT_SECONDS=20 AGENTOPS_TEST_SCRIPT_TIMEOUT_SECONDS=20 timeout 180 pytest -q --basetemp=/tmp/agentops-pytest-g3 \
+            tests/test_rollback_point_creator_prototype.py \
+            tests/test_rollback_point_validator.py \
+            tests/test_sandbox_apply_dry_run.py \
+            tests/test_sandbox_mutation_audit.py \
+            tests/test_sandbox_recovery_simulation.py
+
+      - name: Run tests (structured command validation)
+        run: |
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 AGENTOPS_TEST_COMMAND_TIMEOUT_SECONDS=20 AGENTOPS_TEST_SCRIPT_TIMEOUT_SECONDS=20 timeout 180 pytest -q --basetemp=/tmp/agentops-pytest-g4 \
+            tests/test_structured_command_sandbox_runner.py \
+            tests/test_structured_command_validator.py
 
       - name: Secret and runtime file guard
         run: |

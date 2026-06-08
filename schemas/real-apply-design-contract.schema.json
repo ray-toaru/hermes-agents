@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/real-apply-design-contract.schema.json",
+  "title": "Hermes AgentOps Real Apply Design Contract",
+  "description": "Structured design-only contract for the future real apply pipeline. This schema does not enable apply, authorize mutation, release locks, execute rollback, read secrets, mutate runtime state, or orchestrate business work.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "real_apply_design_contract_id",
+    "generated_at",
+    "generated_by",
+    "repository",
+    "default_branch",
+    "design_status",
+    "design_documents",
+    "pipeline_stages",
+    "implementation_slices_required_before_enablement",
+    "production_blockers",
+    "attack_review",
+    "boundaries"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "real_apply_design_contract_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_real_apply_design_contract$"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "generated_by": {"type": "string", "const": "real-apply-design-v2.8"},
+    "repository": {"type": "string", "minLength": 1},
+    "default_branch": {"type": "string", "minLength": 1},
+    "design_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "design_only",
+        "ready_to_implement_real_apply",
+        "ready_to_enable_real_apply",
+        "apply_must_remain_disabled",
+        "mutation_code_added",
+        "feature_flag_allowed"
+      ],
+      "properties": {
+        "design_only": {"type": "boolean", "const": true},
+        "ready_to_implement_real_apply": {"type": "boolean", "const": false},
+        "ready_to_enable_real_apply": {"type": "boolean", "const": false},
+        "apply_must_remain_disabled": {"type": "boolean", "const": true},
+        "mutation_code_added": {"type": "boolean", "const": false},
+        "feature_flag_allowed": {"type": "boolean", "const": false}
+      }
+    },
+    "design_documents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pipeline_design", "threat_model", "recovery_runbook"],
+      "properties": {
+        "pipeline_design": {"$ref": "#/$defs/design_doc"},
+        "threat_model": {"$ref": "#/$defs/design_doc"},
+        "recovery_runbook": {"$ref": "#/$defs/design_doc"}
+      }
+    },
+    "pipeline_stages": {
+      "type": "array",
+      "minItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stage", "order", "required_evidence", "failure_mode"],
+        "properties": {
+          "stage": {"type": "string", "enum": [
+            "input_selection",
+            "authenticated_approval_gate",
+            "readiness_gate",
+            "production_lock_acquisition",
+            "rollback_point_creation",
+            "pre_mutation_audit_start",
+            "mutation_command_dispatch",
+            "post_apply_validation",
+            "production_audit_completion",
+            "lock_release_or_preservation"
+          ]},
+          "order": {"type": "integer", "minimum": 1, "maximum": 10},
+          "required_evidence": {"type": "string", "minLength": 1},
+          "failure_mode": {"type": "string", "enum": ["fail_closed_no_mutation", "recovery_required_lock_preserved", "lock_preserved_manual_review"]}
+        }
+      }
+    },
+    "implementation_slices_required_before_enablement": {
+      "type": "array",
+      "minItems": 6,
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "production_blockers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["blocker", "blocks", "required_before_implementation"],
+        "properties": {
+          "blocker": {"type": "string", "minLength": 1},
+          "blocks": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["real_apply_implementation", "real_apply_enablement"]}, "uniqueItems": true},
+          "required_before_implementation": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "attack_review": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["attack", "decision", "stable_conclusion"],
+        "properties": {
+          "attack": {"type": "string", "minLength": 1},
+          "decision": {"type": "string", "const": "rejected"},
+          "stable_conclusion": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_is_design_only",
+        "does_not_enable_apply",
+        "does_not_authorize_mutation",
+        "does_not_add_mutation_code",
+        "does_not_mutate_source_profiles",
+        "does_not_release_locks",
+        "does_not_execute_rollback",
+        "does_not_create_production_audit_records",
+        "does_not_read_secret_values",
+        "does_not_mutate_runtime_state",
+        "business_orchestration_not_authorized"
+      ],
+      "properties": {
+        "contract_is_design_only": {"type": "boolean", "const": true},
+        "does_not_enable_apply": {"type": "boolean", "const": true},
+        "does_not_authorize_mutation": {"type": "boolean", "const": true},
+        "does_not_add_mutation_code": {"type": "boolean", "const": true},
+        "does_not_mutate_source_profiles": {"type": "boolean", "const": true},
+        "does_not_release_locks": {"type": "boolean", "const": true},
+        "does_not_execute_rollback": {"type": "boolean", "const": true},
+        "does_not_create_production_audit_records": {"type": "boolean", "const": true},
+        "does_not_read_secret_values": {"type": "boolean", "const": true},
+        "does_not_mutate_runtime_state": {"type": "boolean", "const": true},
+        "business_orchestration_not_authorized": {"type": "boolean", "const": true}
+      }
+    }
+  },
+  "$defs": {
+    "safe_path": {
+      "type": "string",
+      "minLength": 1,
+      "not": {"pattern": "(^/|\\\\|(^|/)\\.\\.($|/)|(^|/)\\.($|/))"}
+    },
+    "design_doc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "required_phrases", "purpose"],
+      "properties": {
+        "path": {"$ref": "#/$defs/safe_path"},
+        "required_phrases": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "purpose": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

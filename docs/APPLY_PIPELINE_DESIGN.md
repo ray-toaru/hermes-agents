@@ -6,7 +6,9 @@ This is the project-level design for a future apply pipeline. It is not an imple
 
 Current status: `apply` is disabled and must remain non-zero.
 
-As of v2.0, the repository has several implemented read-only evidence layers and two constrained governance-record generators. These records improve reviewability, but none of them authorize mutation.
+As of v2.8, detailed design-only real apply assets live in `docs/REAL_APPLY_PIPELINE_DESIGN.md`, `docs/REAL_APPLY_THREAT_MODEL.md`, and `docs/REAL_APPLY_RECOVERY_RUNBOOK.md`. This document remains the project-level baseline; the v2.8 documents refine the future production pipeline without implementing it.
+
+The repository has several implemented read-only evidence layers, sandbox-only evidence layers, and constrained governance-record generators. These records improve reviewability, but none of them authorize mutation.
 
 ## Pipeline Summary
 

@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""Validate real-apply readiness review evidence.
+
+This checker is read-only. It validates the structured P5 review record and
+adds project-specific invariants that prevent readiness evidence from becoming
+mutation authority. It does not enable apply, mutate profiles, acquire or
+release locks, execute rollback, read secrets, mutate runtime state, or
+orchestrate business work.
+"""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+
+from agentops_common import load_json, load_yaml, schema_error_messages, is_safe_relative_path
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+REQUIRED_GATES = {
+    "authenticated_approval",
+    "integrated_sandbox_pipeline",
+    "sandbox_audit_capture",
+    "sandbox_recovery_simulation",
+    "real_lock_lifecycle",
+    "rollback_execution",
+    "post_apply_validation_execution",
+    "production_audit_capture",
+    "production_recovery",
+    "test_stability",
+}
+IMPLEMENTATION_BLOCKING_GATES = {
+    "real_lock_lifecycle",
+    "rollback_execution",
+    "post_apply_validation_execution",
+    "production_audit_capture",
+    "production_recovery",
+}
+
+
+def resolve_path(root: Path, value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else root / path
+
+
+def validate_gate_review(record: dict[str, Any], root: Path, record_path: Path) -> list[str]:
+    errors: list[str] = []
+    gate_reviews = record.get("gate_reviews") or []
+    if not isinstance(gate_reviews, list):
+        return errors
+    gates: list[str] = []
+    for item in gate_reviews:
+        if not isinstance(item, dict):
+            continue
+        gate = item.get("gate")
+        if isinstance(gate, str):
+            gates.append(gate)
+        for field in ("evidence_paths", "test_paths"):
+            for value in item.get(field) or []:
+                if not is_safe_relative_path(value):
+                    errors.append(f"{record_path}: {field} contains unsafe path {value!r}")
+                    continue
+                resolved = resolve_path(root, value)
+                if not resolved.exists():
+                    errors.append(f"{record_path}: {field} path does not exist: {value}")
+    duplicates = sorted({gate for gate in gates if gates.count(gate) > 1})
+    if duplicates:
+        errors.append(f"{record_path}: duplicate gate review entries: {duplicates}")
+    missing = sorted(REQUIRED_GATES - set(gates))
+    if missing:
+        errors.append(f"{record_path}: missing required gate review entries: {missing}")
+    for item in gate_reviews:
+        if not isinstance(item, dict):
+            continue
+        gate = item.get("gate")
+        if gate in IMPLEMENTATION_BLOCKING_GATES and item.get("blocks_implementation") is not True:
+            errors.append(f"{record_path}: {gate} must block real apply implementation")
+    return errors
+
+
+def validate_decision(record: dict[str, Any], record_path: Path) -> list[str]:
+    errors: list[str] = []
+    decision = record.get("decision") or {}
+    if decision.get("ready_to_implement_real_apply") is not False:
+        errors.append(f"{record_path}: ready_to_implement_real_apply must remain false")
+    if decision.get("ready_to_enable_real_apply") is not False:
+        errors.append(f"{record_path}: ready_to_enable_real_apply must remain false")
+    if decision.get("apply_must_remain_disabled") is not True:
+        errors.append(f"{record_path}: apply_must_remain_disabled must remain true")
+    if decision.get("ready_to_design_real_apply") is True and decision.get("next_allowed_step") != "real_apply_design_only":
+        errors.append(f"{record_path}: design-ready review may only allow real_apply_design_only")
+    if decision.get("ready_to_design_real_apply") is False and decision.get("next_allowed_step") == "real_apply_design_only":
+        errors.append(f"{record_path}: not design-ready review cannot allow real_apply_design_only")
+    return errors
+
+
+def validate_boundaries(record: dict[str, Any], record_path: Path) -> list[str]:
+    errors: list[str] = []
+    boundaries = record.get("boundaries") or {}
+    for key, value in boundaries.items():
+        if value is not True:
+            errors.append(f"{record_path}: boundary {key} must be true")
+    return errors
+
+
+def validate_record(root: Path, record: Any, record_path: Path, validator: jsonschema.Draft202012Validator) -> list[str]:
+    errors = schema_error_messages(record, validator, record_path)
+    if not isinstance(record, dict):
+        return errors
+    errors.extend(validate_decision(record, record_path))
+    errors.extend(validate_boundaries(record, record_path))
+    errors.extend(validate_gate_review(record, root, record_path))
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="check-real-apply-readiness-review")
+    parser.add_argument("record_paths", nargs="+")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    schema = load_json(root / "schemas" / "real-apply-readiness-review.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    all_errors: list[str] = []
+    for value in args.record_paths:
+        path = Path(value)
+        if not path.is_absolute():
+            path = root / path
+        try:
+            record = load_yaml(path)
+        except Exception as exc:
+            all_errors.append(f"{path}: {exc}")
+            continue
+        all_errors.extend(validate_record(root, record, path, validator))
+    if all_errors:
+        for error in all_errors:
+            print(error)
+        return 1
+    print("real apply readiness review records valid")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

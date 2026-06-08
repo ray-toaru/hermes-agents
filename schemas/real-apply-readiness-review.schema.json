@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/real-apply-readiness-review.schema.json",
+  "title": "Hermes AgentOps Real Apply Readiness Review",
+  "description": "Structured P5 review evidence for deciding whether the project may proceed to real-apply design. This schema does not enable apply, authorize mutation, release locks, execute rollback, read secrets, mutate runtime state, or orchestrate business work.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "real_apply_readiness_review_id",
+    "generated_at",
+    "generated_by",
+    "repository",
+    "default_branch",
+    "review_scope",
+    "decision",
+    "gate_reviews",
+    "blocking_gaps",
+    "attack_review",
+    "boundaries"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "real_apply_readiness_review_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_real_apply_readiness_review_v2$"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "generated_by": {"type": "string", "const": "p5-real-apply-readiness-review-v2"},
+    "repository": {"type": "string", "minLength": 1},
+    "default_branch": {"type": "string", "minLength": 1},
+    "review_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline", "included_versions", "reviewed_artifacts"],
+      "properties": {
+        "baseline": {"type": "string", "minLength": 1},
+        "included_versions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+$"},
+          "uniqueItems": true
+        },
+        "reviewed_artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/artifact"}
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ready_to_design_real_apply",
+        "ready_to_implement_real_apply",
+        "ready_to_enable_real_apply",
+        "apply_must_remain_disabled",
+        "next_allowed_step",
+        "rationale"
+      ],
+      "properties": {
+        "ready_to_design_real_apply": {"type": "boolean"},
+        "ready_to_implement_real_apply": {"type": "boolean", "const": false},
+        "ready_to_enable_real_apply": {"type": "boolean", "const": false},
+        "apply_must_remain_disabled": {"type": "boolean", "const": true},
+        "next_allowed_step": {"type": "string", "enum": ["real_apply_design_only", "continue_sandbox_prerequisites"]},
+        "rationale": {"type": "string", "minLength": 1}
+      }
+    },
+    "gate_reviews": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gate", "status", "evidence_paths", "test_paths", "blocks_design", "blocks_implementation", "notes"],
+        "properties": {
+          "gate": {
+            "type": "string",
+            "enum": [
+              "authenticated_approval",
+              "live_github_approval",
+              "structured_command_evidence",
+              "integrated_sandbox_pipeline",
+              "sandbox_audit_capture",
+              "sandbox_recovery_simulation",
+              "real_lock_lifecycle",
+              "rollback_execution",
+              "post_apply_validation_execution",
+              "production_audit_capture",
+              "production_recovery",
+              "test_stability"
+            ]
+          },
+          "status": {"type": "string", "enum": ["implemented", "read_only_implemented", "sandbox_only_implemented", "prototype_only", "not_implemented", "partially_implemented"]},
+          "evidence_paths": {"type": "array", "items": {"$ref": "#/$defs/safe_path"}},
+          "test_paths": {"type": "array", "items": {"$ref": "#/$defs/safe_path"}},
+          "blocks_design": {"type": "boolean"},
+          "blocks_implementation": {"type": "boolean"},
+          "notes": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "blocking_gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gap", "blocks", "required_evidence_before_implementation"],
+        "properties": {
+          "gap": {"type": "string", "minLength": 1},
+          "blocks": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["real_apply_implementation", "real_apply_enablement"]}, "uniqueItems": true},
+          "required_evidence_before_implementation": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "attack_review": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["attack", "decision", "stable_conclusion"],
+        "properties": {
+          "attack": {"type": "string", "minLength": 1},
+          "decision": {"type": "string", "const": "rejected"},
+          "stable_conclusion": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "review_is_evidence_only",
+        "does_not_enable_apply",
+        "does_not_authorize_mutation",
+        "does_not_mutate_source_profiles",
+        "does_not_release_locks",
+        "does_not_execute_rollback",
+        "does_not_create_production_audit_records",
+        "does_not_read_secret_values",
+        "does_not_mutate_runtime_state",
+        "business_orchestration_not_authorized"
+      ],
+      "properties": {
+        "review_is_evidence_only": {"type": "boolean", "const": true},
+        "does_not_enable_apply": {"type": "boolean", "const": true},
+        "does_not_authorize_mutation": {"type": "boolean", "const": true},
+        "does_not_mutate_source_profiles": {"type": "boolean", "const": true},
+        "does_not_release_locks": {"type": "boolean", "const": true},
+        "does_not_execute_rollback": {"type": "boolean", "const": true},
+        "does_not_create_production_audit_records": {"type": "boolean", "const": true},
+        "does_not_read_secret_values": {"type": "boolean", "const": true},
+        "does_not_mutate_runtime_state": {"type": "boolean", "const": true},
+        "business_orchestration_not_authorized": {"type": "boolean", "const": true}
+      }
+    }
+  },
+  "$defs": {
+    "safe_path": {
+      "type": "string",
+      "minLength": 1,
+      "not": {"pattern": "(^/|\\\\|(^|/)\\.\\.($|/)|(^|/)\\.($|/))"}
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "purpose"],
+      "properties": {
+        "path": {"$ref": "#/$defs/safe_path"},
+        "purpose": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}
