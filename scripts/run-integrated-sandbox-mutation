@@ -1,0 +1,763 @@
+#!/usr/bin/env python3
+"""Run an integrated sandbox-only mutation pipeline for an AgentOps change.
+
+This command is not real apply. It copies reviewed repository governance inputs
+into a throwaway temporary workspace, verifies authenticated approval evidence,
+checks readiness, acquires a temporary-repository lock prototype, creates a
+rollback-point evidence record in that temporary repository, runs sandbox-only
+post-apply validation, and emits a single evidence record.
+
+It never mutates source managed profiles, enables apply, releases locks,
+executes rollback, creates production audit records, reads secrets, mutates
+runtime state, or orchestrates business work.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import subprocess
+import sys
+import tempfile
+import shutil
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+from agentops_common import (
+    copy_workspace_dirs,
+    load_json,
+    load_yaml,
+    run_command,
+    run_internal_python_command,
+    sha256_file,
+    sha256_text,
+    utc_now_compact,
+    utc_now_iso,
+    write_yaml,
+)
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+COPY_DIRS = ("profiles", "policies", "schemas", "scripts", "inventory", "changes")
+FORBIDDEN_PATH_PARTS = {".git", "logs", "sessions", "workspace", "workspaces", "runtime"}
+FORBIDDEN_FILENAMES = {".env", "secrets.json", "state.db"}
+LOCK_PATH = Path(".hermes-agentops") / "locks" / "real-apply.lock"
+VALIDATION_COMMANDS = (
+    ("agentops.validate-schemas", [sys.executable, "scripts/hermes-agentops", "validate-schemas"]),
+    ("agentops.validate-profiles", [sys.executable, "scripts/hermes-agentops", "validate", "-v"]),
+    ("git.diff-check", ["git", "diff", "--check"]),
+)
+
+
+def hash_tree(path: Path) -> str:
+    digest = hashlib.sha256()
+    if not path.exists():
+        digest.update(b"<missing>")
+        return digest.hexdigest()
+    for file_path in sorted(item for item in path.rglob("*") if item.is_file()):
+        relative = file_path.relative_to(path).as_posix()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(file_path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def clean_python_cache(root: Path) -> None:
+    for cache_dir in root.rglob("__pycache__"):
+        if cache_dir.is_dir():
+            shutil.rmtree(cache_dir)
+    for pyc in root.rglob("*.pyc"):
+        if pyc.exists():
+            pyc.unlink()
+
+
+def init_sandbox_git(sandbox: Path) -> None:
+    for command in (
+        ["git", "init"],
+        ["git", "config", "user.email", "sandbox@example.local"],
+        ["git", "config", "user.name", "sandbox"],
+        ["git", "add", *COPY_DIRS],
+        ["git", "commit", "-m", "sandbox baseline"],
+    ):
+        process = run_command(command, sandbox)
+        if process.returncode != 0:
+            raise RuntimeError(process.stderr.strip() or process.stdout.strip() or f"command failed: {command}")
+
+
+def commit_generated_evidence(sandbox: Path) -> subprocess.CompletedProcess[str]:
+    add = run_command(["git", "add", "changes"], sandbox)
+    if add.returncode != 0:
+        return add
+    return run_command(["git", "commit", "-m", "sandbox pre-apply evidence"], sandbox)
+
+
+def git_head(root: Path) -> str:
+    process = run_command(["git", "rev-parse", "HEAD"], root)
+    if process.returncode != 0:
+        raise RuntimeError(process.stderr.strip() or "git rev-parse HEAD failed")
+    return process.stdout.strip()
+
+
+def step_record(name: str, process: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+    output = (process.stdout + process.stderr).strip()
+    return {
+        "name": name,
+        "status": "success" if process.returncode == 0 else "failed",
+        "exit_code": process.returncode,
+        "stdout_sha256": sha256_text(process.stdout),
+        "stderr_sha256": sha256_text(process.stderr),
+        "redacted_summary": output[:240] if output else f"{name} exited {process.returncode} with no output",
+    }
+
+
+def command_record(command_id: str, argv: list[str], process: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+    output = (process.stdout + process.stderr).strip()
+    return {
+        "command_id": command_id,
+        "argv": argv,
+        "exit_code": process.returncode,
+        "status": "success" if process.returncode == 0 else "failed",
+        "stdout_sha256": sha256_text(process.stdout),
+        "stderr_sha256": sha256_text(process.stderr),
+        "redacted_summary": output[:240] if output else f"{command_id} exited {process.returncode} with no output",
+    }
+
+
+def post_apply_boundaries() -> dict[str, bool]:
+    return {
+        "temporary_workspace_only": True,
+        "does_not_enable_apply": True,
+        "does_not_mutate_source_profiles": True,
+        "does_not_acquire_or_release_locks": True,
+        "does_not_execute_rollback": True,
+        "does_not_create_audit_records": True,
+        "does_not_read_secret_values": True,
+        "does_not_mutate_runtime_state": True,
+        "business_orchestration_not_authorized": True,
+    }
+
+
+def post_apply_failure_recovery() -> dict[str, Any]:
+    return {
+        "manual_review_required": True,
+        "rollback_not_executed_by_runner": True,
+        "lock_release_not_performed_by_runner": True,
+        "note": "Same-sandbox validation failure does not execute rollback or release locks; future real pipelines must require manual review on uncertainty.",
+    }
+
+
+def build_post_apply_validation_report(
+    *,
+    change_id: str,
+    agent: str,
+    source_profile_hash_before: str,
+    source_profile_hash_after: str,
+    sandbox_patch_applied: bool,
+    validation_commands: list[dict[str, Any]],
+) -> dict[str, Any]:
+    source_unchanged = source_profile_hash_before == source_profile_hash_after
+    commands_success = bool(validation_commands) and all(item["status"] == "success" for item in validation_commands)
+    status = "success" if source_unchanged and sandbox_patch_applied and commands_success else "failed_closed"
+    parts = change_id.split("_")
+    if len(parts) != 3:
+        raise RuntimeError("change_id must have timestamp_agent_digest format")
+    return {
+        "schema_version": 1,
+        "post_apply_validation_run_id": f"{utc_now_compact()}_{parts[1]}_{parts[2]}_post_apply_validation_run",
+        "change_id": change_id,
+        "agent": agent,
+        "generated_at": utc_now_iso(),
+        "generated_by": "run-integrated-sandbox-mutation",
+        "sandbox_only": True,
+        "mutation_enabled": False,
+        "apply_authorized": False,
+        "status": status,
+        "source_profile_hash_before": source_profile_hash_before,
+        "source_profile_hash_after": source_profile_hash_after,
+        "source_profiles_unchanged": source_unchanged,
+        "sandbox_patch_applied": sandbox_patch_applied,
+        "validation_commands": validation_commands,
+        "boundaries": post_apply_boundaries(),
+        "failure_recovery": post_apply_failure_recovery(),
+    }
+
+
+def validate_post_apply_report(source_root: Path, report: dict[str, Any]) -> list[str]:
+    schema = load_json(source_root / "schemas" / "post-apply-validation-run.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    return [
+        f"{'.'.join(str(part) for part in error.path) or '<root>'}: {error.message}"
+        for error in sorted(validator.iter_errors(report), key=lambda item: list(item.path))
+    ]
+
+
+def run_same_sandbox_post_apply_validation(
+    *,
+    source_root: Path,
+    sandbox: Path,
+    change_id: str,
+    agent: str,
+    source_profile_hash_before: str,
+) -> subprocess.CompletedProcess[str]:
+    diff_path = sandbox / "changes" / change_id / "diff.patch"
+    validation_commands: list[dict[str, Any]] = []
+    sandbox_patch_applied = False
+
+    if not diff_path.exists():
+        return subprocess.CompletedProcess(["same-sandbox-post-apply-validation"], 2, "", f"missing diff patch: {diff_path}")
+
+    patch = run_command(["git", "apply"], sandbox, input_text=diff_path.read_text(encoding="utf-8"))
+    validation_commands.append(command_record("git.apply", ["git", "apply"], patch))
+    if patch.returncode == 0:
+        sandbox_patch_applied = True
+        for command_id, argv in VALIDATION_COMMANDS:
+            process = run_internal_python_command(argv, sandbox) if argv[0] == sys.executable else run_command(argv, sandbox)
+            validation_commands.append(command_record(command_id, argv, process))
+
+    source_profile_hash_after = hash_tree(source_root / "profiles")
+    report = build_post_apply_validation_report(
+        change_id=change_id,
+        agent=agent,
+        source_profile_hash_before=source_profile_hash_before,
+        source_profile_hash_after=source_profile_hash_after,
+        sandbox_patch_applied=sandbox_patch_applied,
+        validation_commands=validation_commands,
+    )
+    errors = validate_post_apply_report(source_root, report)
+    stdout = yaml.safe_dump(report, sort_keys=False)
+    stderr = ""
+    return_code = 0 if report["status"] == "success" else 2
+    if errors:
+        return_code = 2
+        stderr = "post-apply validation run evidence validation failed: " + "; ".join(errors)
+    return subprocess.CompletedProcess(["same-sandbox-post-apply-validation"], return_code, stdout, stderr)
+
+
+def artifact(path: Path | None, root: Path, *, status: str | None = None) -> dict[str, Any]:
+    if path is None:
+        return {"status": status or "missing", "path": None, "sha256": None}
+    if not path.exists():
+        relative = path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
+        return {"status": status or "missing", "path": relative, "sha256": None}
+    return {"status": status or "present", "path": path.relative_to(root).as_posix(), "sha256": sha256_file(path)}
+
+
+def write_text_artifact(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def boundaries() -> dict[str, bool]:
+    return {
+        "temporary_workspace_only": True,
+        "does_not_enable_apply": True,
+        "does_not_mutate_source_profiles": True,
+        "does_not_release_locks": True,
+        "does_not_execute_rollback": True,
+        "does_not_create_production_audit_records": True,
+        "does_not_read_secret_values": True,
+        "does_not_mutate_runtime_state": True,
+        "business_orchestration_not_authorized": True,
+    }
+
+
+def failure_recovery() -> dict[str, Any]:
+    return {
+        "manual_review_required": True,
+        "rollback_not_executed_by_runner": True,
+        "lock_release_not_performed_by_runner": True,
+        "note": "Integrated sandbox failures fail closed. The runner never releases locks or executes rollback; future real mutation must preserve uncertain state for manual review.",
+    }
+
+
+def build_readiness_report(root: Path, change_id: str, agent: str, evidence_dir: Path) -> dict[str, Any]:
+    change_verify_path = evidence_dir / "change-verify.txt"
+    authenticated_path = evidence_dir / "authenticated-approval.yaml"
+    preapply_path = root / "changes" / change_id / "pre-apply-plan.yaml"
+    lock_analysis_path = evidence_dir / "apply-lock-analysis.yaml"
+    gates = [
+        {
+            "name": "change_verify",
+            "phase": "pre_apply",
+            "required_before_apply": True,
+            "status": "present",
+            "blocking": False,
+            "evidence_path": change_verify_path.relative_to(root).as_posix(),
+            "evidence_sha256": sha256_file(change_verify_path),
+            "note": "Strict change verification passed inside the temporary sandbox only.",
+        },
+        {
+            "name": "approval_identity",
+            "phase": "pre_apply",
+            "required_before_apply": True,
+            "status": "present",
+            "blocking": False,
+            "evidence_path": authenticated_path.relative_to(root).as_posix(),
+            "evidence_sha256": sha256_file(authenticated_path),
+            "note": "Authenticated approval evidence is verified but does not authorize apply.",
+        },
+        {
+            "name": "pre_apply_plan",
+            "phase": "pre_apply",
+            "required_before_apply": True,
+            "status": "present",
+            "blocking": False,
+            "evidence_path": preapply_path.relative_to(root).as_posix(),
+            "evidence_sha256": sha256_file(preapply_path),
+            "note": "Pre-apply plan exists in the temporary sandbox and keeps mutation disabled.",
+        },
+        {
+            "name": "apply_lock_analysis",
+            "phase": "pre_apply",
+            "required_before_apply": True,
+            "status": "present",
+            "blocking": False,
+            "evidence_path": lock_analysis_path.relative_to(root).as_posix(),
+            "evidence_sha256": sha256_file(lock_analysis_path),
+            "note": "Read-only apply-lock analysis found no blocking governance locks in the sandbox copy.",
+        },
+        {
+            "name": "apply_lock_record",
+            "phase": "future_apply",
+            "required_before_apply": False,
+            "status": "future_only",
+            "blocking": False,
+            "evidence_path": f"changes/{change_id}/apply-lock.yaml",
+            "evidence_sha256": None,
+            "note": "Real source lock acquisition is not performed by this sandbox readiness report.",
+        },
+        {
+            "name": "rollback_point",
+            "phase": "future_apply",
+            "required_before_apply": False,
+            "status": "future_only",
+            "blocking": False,
+            "evidence_path": f"changes/{change_id}/rollback-point.yaml",
+            "evidence_sha256": None,
+            "note": "Rollback point creation happens later in the temporary sandbox pipeline only.",
+        },
+        {
+            "name": "audit_record",
+            "phase": "future_apply",
+            "required_before_apply": False,
+            "status": "future_only",
+            "blocking": False,
+            "evidence_path": f"changes/{change_id}/audit-record.yaml",
+            "evidence_sha256": None,
+            "note": "Production audit capture remains future work.",
+        },
+        {
+            "name": "post_apply_validation",
+            "phase": "post_apply",
+            "required_before_apply": False,
+            "status": "future_only",
+            "blocking": False,
+            "evidence_path": f"changes/{change_id}/post-apply-validation.yaml",
+            "evidence_sha256": None,
+            "note": "Post-apply validation cannot be required before apply and does not authorize apply.",
+        },
+    ]
+    return {
+        "schema_version": 1,
+        "readiness_report_id": f"{change_id}_readiness",
+        "change_id": change_id,
+        "agent": agent,
+        "generated_at": utc_now_iso(),
+        "generated_by": "run-integrated-sandbox-mutation",
+        "mutation_enabled": False,
+        "apply_authorized": False,
+        "status": "evidence_complete_not_authorized",
+        "gate_count": len(gates),
+        "blocking_count": 0,
+        "gates": gates,
+        "boundaries": {
+            "report_is_read_only": True,
+            "does_not_authorize_apply": True,
+            "does_not_acquire_or_release_locks": True,
+            "does_not_mutate_profiles_or_runtime": True,
+            "does_not_read_secret_values": True,
+            "does_not_execute_rollback": True,
+            "does_not_orchestrate_business_tasks": True,
+        },
+        "summary": {
+            "human_review_required": True,
+            "note": "Integrated sandbox readiness is evidence completeness only; mutation remains disabled.",
+        },
+    }
+
+
+def validate_evidence(source_root: Path, evidence: dict[str, Any]) -> list[str]:
+    schema = load_json(source_root / "schemas" / "integrated-sandbox-mutation-run.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    return [
+        f"{'.'.join(str(part) for part in error.path) or '<root>'}: {error.message}"
+        for error in sorted(validator.iter_errors(evidence), key=lambda item: list(item.path))
+    ]
+
+
+def run_tool(sandbox: Path, steps: list[dict[str, Any]], name: str, command: list[str]) -> subprocess.CompletedProcess[str]:
+    process = run_internal_python_command(command, sandbox)
+    steps.append(step_record(name, process))
+    return process
+
+
+def fail_report(
+    *,
+    source_root: Path,
+    change_id: str,
+    agent: str,
+    operator: str,
+    failure_stage: str,
+    source_profiles_hash_before: str,
+    steps: list[dict[str, Any]],
+    artifacts: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    source_profiles_hash_after = hash_tree(source_root / "profiles")
+    return build_report(
+        source_root=source_root,
+        change_id=change_id,
+        agent=agent,
+        operator=operator,
+        status="failed_closed",
+        failure_stage=failure_stage,
+        source_profiles_hash_before=source_profiles_hash_before,
+        source_profiles_hash_after=source_profiles_hash_after,
+        steps=steps,
+        artifacts=artifacts,
+        assertions={
+            "authenticated_approval_verified": artifacts["authenticated_approval"]["status"] == "present",
+            "readiness_complete_not_authorized": artifacts["apply_readiness"]["status"] == "present",
+            "sandbox_lock_acquired": artifacts["real_apply_lock"]["status"] == "present",
+            "rollback_point_created": artifacts["rollback_point"]["status"] == "present",
+            "post_apply_validation_success": artifacts["post_apply_validation"]["status"] == "present" and failure_stage != "post_apply_validation",
+            "post_apply_validation_same_sandbox": artifacts["post_apply_validation"]["status"] == "present",
+        },
+    )
+
+
+def build_report(
+    *,
+    source_root: Path,
+    change_id: str,
+    agent: str,
+    operator: str,
+    status: str,
+    failure_stage: str | None,
+    source_profiles_hash_before: str,
+    source_profiles_hash_after: str,
+    steps: list[dict[str, Any]],
+    artifacts: dict[str, dict[str, Any]],
+    assertions: dict[str, bool],
+) -> dict[str, Any]:
+    parts = change_id.split("_")
+    if len(parts) != 3:
+        raise RuntimeError("change_id must have timestamp_agent_digest format")
+    source_unchanged = source_profiles_hash_before == source_profiles_hash_after
+    return {
+        "schema_version": 1,
+        "integrated_sandbox_run_id": f"{utc_now_compact()}_{parts[1]}_{parts[2]}_integrated_sandbox_mutation_run",
+        "change_id": change_id,
+        "agent": agent,
+        "operator": operator,
+        "generated_at": utc_now_iso(),
+        "generated_by": "run-integrated-sandbox-mutation",
+        "sandbox_only": True,
+        "mutation_enabled": False,
+        "apply_authorized": False,
+        "status": status if source_unchanged else "failed_closed",
+        "failure_stage": failure_stage if source_unchanged else "source_immutability",
+        "source_profiles_hash_before": source_profiles_hash_before,
+        "source_profiles_hash_after": source_profiles_hash_after,
+        "source_profiles_unchanged": source_unchanged,
+        "steps": steps,
+        "artifacts": artifacts,
+        "assertions": {
+            "authenticated_approval_verified": assertions.get("authenticated_approval_verified", False),
+            "readiness_complete_not_authorized": assertions.get("readiness_complete_not_authorized", False),
+            "sandbox_lock_acquired": assertions.get("sandbox_lock_acquired", False),
+            "rollback_point_created": assertions.get("rollback_point_created", False),
+            "post_apply_validation_success": assertions.get("post_apply_validation_success", False),
+            "post_apply_validation_same_sandbox": assertions.get("post_apply_validation_same_sandbox", False),
+            "source_profiles_unchanged": source_unchanged,
+            "does_not_authorize_apply": True,
+        },
+        "boundaries": boundaries(),
+        "failure_recovery": failure_recovery(),
+    }
+
+
+def initial_artifacts() -> dict[str, dict[str, Any]]:
+    return {
+        "change_verify": artifact(None, Path(".")),
+        "authenticated_approval": artifact(None, Path(".")),
+        "pre_apply_plan": artifact(None, Path(".")),
+        "apply_lock_analysis": artifact(None, Path(".")),
+        "apply_readiness": artifact(None, Path(".")),
+        "real_apply_lock": artifact(None, Path(".")),
+        "rollback_point": artifact(None, Path(".")),
+        "post_apply_validation": artifact(None, Path(".")),
+    }
+
+
+def run_pipeline(source_root: Path, args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    proposal_path = source_root / "changes" / args.change_id / "proposal.yaml"
+    if not proposal_path.exists():
+        raise RuntimeError(f"missing proposal: {proposal_path}")
+    proposal = load_yaml(proposal_path)
+    if not isinstance(proposal, dict):
+        raise RuntimeError("proposal must be a mapping")
+    agent = proposal.get("agent")
+    if not isinstance(agent, str) or not agent:
+        raise RuntimeError("proposal.agent must be a non-empty string")
+
+    source_profiles_hash_before = hash_tree(source_root / "profiles")
+    steps: list[dict[str, Any]] = []
+    artifacts = initial_artifacts()
+
+    with tempfile.TemporaryDirectory(prefix="hermes-integrated-sandbox-") as tmpdir:
+        sandbox = Path(tmpdir)
+        try:
+            copy_workspace_dirs(
+                source_root,
+                sandbox,
+                copy_dirs=COPY_DIRS,
+                forbidden_path_parts=FORBIDDEN_PATH_PARTS,
+                forbidden_filenames=FORBIDDEN_FILENAMES,
+            )
+            init_sandbox_git(sandbox)
+        except Exception:
+            return 2, fail_report(
+                source_root=source_root,
+                change_id=args.change_id,
+                agent=agent,
+                operator=args.operator,
+                failure_stage="copy_workspace",
+                source_profiles_hash_before=source_profiles_hash_before,
+                steps=steps,
+                artifacts=artifacts,
+            )
+
+        evidence_dir = sandbox / "changes" / args.change_id / "integrated-sandbox-evidence"
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+
+        change_verify = run_tool(
+            sandbox,
+            steps,
+            "change_verify",
+            [
+                sys.executable,
+                "scripts/hermes-agentops",
+                "--root",
+                str(sandbox),
+                "changes",
+                "verify",
+                args.change_id,
+                "--check-git-clean",
+                "--check-patch-applicable",
+            ],
+        )
+        write_text_artifact(evidence_dir / "change-verify.txt", change_verify.stdout + change_verify.stderr)
+        artifacts["change_verify"] = artifact(evidence_dir / "change-verify.txt", sandbox)
+        if change_verify.returncode != 0:
+            return 2, fail_report(source_root=source_root, change_id=args.change_id, agent=agent, operator=args.operator, failure_stage="change_verify", source_profiles_hash_before=source_profiles_hash_before, steps=steps, artifacts=artifacts)
+
+        approval_command = [
+            sys.executable,
+            "scripts/verify-authenticated-approval",
+            args.change_id,
+            "--root",
+            str(sandbox),
+            "--mode",
+            args.approval_mode,
+            "--repository",
+            args.repository,
+            "--default-branch",
+            args.default_branch,
+            "--verified-at",
+            args.verified_at or utc_now_iso(),
+            "--minimum-permission",
+            args.minimum_permission,
+        ]
+        if args.attestation:
+            attestation_path = Path(args.attestation)
+            if not attestation_path.is_absolute():
+                attestation_path = source_root / attestation_path
+            try:
+                relative_attestation = attestation_path.resolve().relative_to(source_root)
+            except ValueError:
+                relative_attestation = None
+            sandbox_attestation = sandbox / relative_attestation if relative_attestation else attestation_path
+            approval_command.extend(["--attestation", str(sandbox_attestation)])
+        approval = run_tool(sandbox, steps, "authenticated_approval", approval_command)
+        if approval.returncode == 0:
+            write_text_artifact(evidence_dir / "authenticated-approval.yaml", approval.stdout)
+            artifacts["authenticated_approval"] = artifact(evidence_dir / "authenticated-approval.yaml", sandbox)
+        else:
+            return 2, fail_report(source_root=source_root, change_id=args.change_id, agent=agent, operator=args.operator, failure_stage="authenticated_approval", source_profiles_hash_before=source_profiles_hash_before, steps=steps, artifacts=artifacts)
+
+        plan = run_tool(
+            sandbox,
+            steps,
+            "pre_apply_plan",
+            [sys.executable, "scripts/generate-pre-apply-plan", args.change_id, "--root", str(sandbox)],
+        )
+        preapply_path = sandbox / "changes" / args.change_id / "pre-apply-plan.yaml"
+        artifacts["pre_apply_plan"] = artifact(preapply_path, sandbox)
+        if plan.returncode != 0:
+            return 2, fail_report(source_root=source_root, change_id=args.change_id, agent=agent, operator=args.operator, failure_stage="pre_apply_plan", source_profiles_hash_before=source_profiles_hash_before, steps=steps, artifacts=artifacts)
+
+        lock_analysis = run_tool(sandbox, steps, "apply_lock_analysis", [sys.executable, "scripts/analyze-apply-locks", "--root", str(sandbox)])
+        if lock_analysis.returncode == 0:
+            write_text_artifact(evidence_dir / "apply-lock-analysis.yaml", lock_analysis.stdout)
+            artifacts["apply_lock_analysis"] = artifact(evidence_dir / "apply-lock-analysis.yaml", sandbox)
+            lock_report = yaml.safe_load(lock_analysis.stdout)
+            if not isinstance(lock_report, dict) or lock_report.get("blocking_count") != 0:
+                return 2, fail_report(source_root=source_root, change_id=args.change_id, agent=agent, operator=args.operator, failure_stage="apply_lock_analysis", source_profiles_hash_before=source_profiles_hash_before, steps=steps, artifacts=artifacts)
+        else:
+            return 2, fail_report(source_root=source_root, change_id=args.change_id, agent=agent, operator=args.operator, failure_stage="apply_lock_analysis", source_profiles_hash_before=source_profiles_hash_before, steps=steps, artifacts=artifacts)
+
+        readiness_path = evidence_dir / "apply-readiness.yaml"
+        readiness_report = build_readiness_report(sandbox, args.change_id, agent, evidence_dir)
+        write_yaml(readiness_path, readiness_report)
+        readiness = run_tool(
+            sandbox,
+            steps,
+            "apply_readiness",
+            [sys.executable, "scripts/check-apply-readiness", "--root", str(sandbox), "--require-evidence-files", str(readiness_path)],
+        )
+        artifacts["apply_readiness"] = artifact(readiness_path, sandbox)
+        if readiness.returncode != 0:
+            return 2, fail_report(source_root=source_root, change_id=args.change_id, agent=agent, operator=args.operator, failure_stage="apply_readiness", source_profiles_hash_before=source_profiles_hash_before, steps=steps, artifacts=artifacts)
+
+        clean_python_cache(sandbox)
+        pre_commit = commit_generated_evidence(sandbox)
+        steps.append(step_record("pre_apply_commit", pre_commit))
+        if pre_commit.returncode != 0:
+            return 2, fail_report(source_root=source_root, change_id=args.change_id, agent=agent, operator=args.operator, failure_stage="pre_apply_commit", source_profiles_hash_before=source_profiles_hash_before, steps=steps, artifacts=artifacts)
+
+        preapply_sha = sha256_file(preapply_path)
+        lock = run_tool(
+            sandbox,
+            steps,
+            "sandbox_lock",
+            [
+                sys.executable,
+                "scripts/real-apply-lock-prototype",
+                "--root",
+                str(sandbox),
+                "acquire",
+                args.change_id,
+                "--operator",
+                args.operator,
+                "--pre-apply-plan-sha256",
+                preapply_sha,
+                "--base-commit",
+                git_head(sandbox),
+            ],
+        )
+        artifacts["real_apply_lock"] = artifact(sandbox / LOCK_PATH, sandbox)
+        if lock.returncode != 0:
+            return 2, fail_report(source_root=source_root, change_id=args.change_id, agent=agent, operator=args.operator, failure_stage="sandbox_lock", source_profiles_hash_before=source_profiles_hash_before, steps=steps, artifacts=artifacts)
+
+        clean_python_cache(sandbox)
+        rollback = run_tool(
+            sandbox,
+            steps,
+            "rollback_point",
+            [
+                sys.executable,
+                "scripts/create-rollback-point-prototype",
+                args.change_id,
+                "--root",
+                str(sandbox),
+                "--operator",
+                args.operator,
+                "--pre-apply-plan-sha256",
+                preapply_sha,
+            ],
+        )
+        if rollback.returncode == 0:
+            write_text_artifact(evidence_dir / "rollback-point-created.yaml", rollback.stdout)
+            artifacts["rollback_point"] = artifact(evidence_dir / "rollback-point-created.yaml", sandbox)
+        else:
+            return 2, fail_report(source_root=source_root, change_id=args.change_id, agent=agent, operator=args.operator, failure_stage="rollback_point", source_profiles_hash_before=source_profiles_hash_before, steps=steps, artifacts=artifacts)
+
+        post_validation = run_same_sandbox_post_apply_validation(
+            source_root=source_root,
+            sandbox=sandbox,
+            change_id=args.change_id,
+            agent=agent,
+            source_profile_hash_before=source_profiles_hash_before,
+        )
+        steps.append(step_record("post_apply_validation", post_validation))
+        write_text_artifact(evidence_dir / "post-apply-validation-run.yaml", post_validation.stdout + post_validation.stderr)
+        artifacts["post_apply_validation"] = artifact(evidence_dir / "post-apply-validation-run.yaml", sandbox)
+        if post_validation.returncode != 0:
+            return 2, fail_report(source_root=source_root, change_id=args.change_id, agent=agent, operator=args.operator, failure_stage="post_apply_validation", source_profiles_hash_before=source_profiles_hash_before, steps=steps, artifacts=artifacts)
+
+        source_profiles_hash_after = hash_tree(source_root / "profiles")
+        report = build_report(
+            source_root=source_root,
+            change_id=args.change_id,
+            agent=agent,
+            operator=args.operator,
+            status="success",
+            failure_stage=None,
+            source_profiles_hash_before=source_profiles_hash_before,
+            source_profiles_hash_after=source_profiles_hash_after,
+            steps=steps,
+            artifacts=artifacts,
+            assertions={
+                "authenticated_approval_verified": True,
+                "readiness_complete_not_authorized": True,
+                "sandbox_lock_acquired": True,
+                "rollback_point_created": True,
+                "post_apply_validation_success": True,
+                "post_apply_validation_same_sandbox": True,
+            },
+        )
+        return (0 if report["status"] == "success" else 2), report
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="run-integrated-sandbox-mutation")
+    parser.add_argument("change_id")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--operator", default="sandbox-operator")
+    parser.add_argument("--approval-mode", choices=["fixture_contract_only", "signed_attestation"], default="fixture_contract_only")
+    parser.add_argument("--attestation", help="Signed approval attestation path for signed_attestation mode")
+    parser.add_argument("--repository", default="ray-toaru/hermes-agents")
+    parser.add_argument("--default-branch", default="main")
+    parser.add_argument("--minimum-permission", choices=["write", "maintain", "admin"], default="write")
+    parser.add_argument("--verified-at")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    try:
+        code, evidence = run_pipeline(root, args)
+        errors = validate_evidence(root, evidence)
+    except Exception as exc:
+        print(f"integrated sandbox mutation failed: {exc}", file=sys.stderr)
+        return 2
+    if errors:
+        evidence["status"] = "failed_closed"
+        evidence["failure_stage"] = "evidence_validation"
+        print(yaml.safe_dump(evidence, sort_keys=False), end="")
+        print("integrated sandbox mutation evidence validation failed:", file=sys.stderr)
+        for error in errors:
+            print(f"- {error}", file=sys.stderr)
+        return 2
+    print(yaml.safe_dump(evidence, sort_keys=False), end="")
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -24,6 +24,9 @@ This matrix binds project claims to concrete implementation evidence. It is a go
 | Shared subprocess execution has a hard timeout | `scripts/agentops_common.py::run_command`; migrated command call sites in CLI/sandbox/prototype scripts | `tests/test_agentops_common.py` | Implemented | Timeout is a fail-closed command failure, not retry authority |
 | Internal script dispatch for reviewed AgentOps Python entry points exists | `scripts/agentops_common.py::run_python_script_main`, `::run_internal_python_command`; sandbox-only runners use internal dispatch for repository scripts | `tests/test_agentops_common.py`, `tests/test_post_apply_validation_sandbox_runner.py`, `tests/test_structured_command_sandbox_runner.py`, `tests/agentops_test_utils.py` | Implemented | Internal dispatch is not shell execution, not record-provided mutation authority, and not apply authorization |
 | Test harness avoids repeated child Python cold starts | `tests/agentops_test_utils.py`, `tests/conftest.py` | `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q --basetemp=/tmp/agentops-pytest` | Implemented | Test harness change does not weaken runtime safety boundaries |
+| Integrated sandbox mutation pipeline exists | `scripts/run-integrated-sandbox-mutation`; `schemas/integrated-sandbox-mutation-run.schema.json` | `tests/test_integrated_sandbox_mutation.py` | Sandbox-only implemented | Does not enable real apply, mutate source profiles, release locks, execute rollback, or create production audit records |
+| Sandbox mutation audit capture exists | `scripts/generate-sandbox-mutation-audit`; `scripts/check-sandbox-mutation-audit`; `schemas/sandbox-mutation-audit-record.schema.json` | `tests/test_sandbox_mutation_audit.py` | Sandbox-only implemented | Writes audit evidence to stdout only; production audit remains unimplemented and cannot authorize apply |
+| Sandbox recovery simulation exists | `scripts/simulate-sandbox-recovery`; `scripts/check-sandbox-recovery-simulation`; `schemas/sandbox-recovery-simulation.schema.json` | `tests/test_sandbox_recovery_simulation.py` | Sandbox-only implemented | Simulates recovery decisions only; cannot release locks, execute rollback, retry, or authorize apply |
 | Real mutation command exists | `scripts/hermes-agentops apply` | `tests/test_change_workflow.py::test_apply_remains_disabled` | Not implemented | Must stay disabled until prerequisite ADRs converge |
 
 ## Known Gaps Before Any Real Mutation
@@ -32,9 +35,8 @@ This matrix binds project claims to concrete implementation evidence. It is a go
 | --- | --- | --- |
 | Live GitHub approval verification | Signed attestations now cover a non-fixture authenticated path, but direct GitHub review verification is still absent | Read-only `live_github` verifier with repository, PR/review, diff, approver, permission, rejection, and time binding |
 | Integrated real lock lifecycle | Governance lock files and temporary prototypes do not protect a live apply pipeline | Reviewed lock acquisition/release/recovery integration with preservation on uncertainty |
-| Rollback execution and validation | Rollback point records do not roll back anything | Failure simulation, rollback command registry, post-rollback validation, and audit evidence |
-| Mutation audit capture | Current audit records are validation-only evidence | Structured command capture around sandbox mutation before any real mutation |
-| Integrated sandbox mutation pipeline | Existing sandbox pieces are standalone | A pipeline that combines authenticated approval evidence, lock, rollback point, sandbox mutation, post-apply validation, audit, and recovery simulation without source mutation |
+| Rollback execution and validation | Recovery simulation exists, but rollback point records still do not roll back anything | Rollback command registry, post-rollback validation, and production audit evidence |
+| Production mutation audit capture | Sandbox audit and recovery simulation exist, but production audit records are not written by any real apply pipeline | Production audit capture for success and failure paths after real lock, rollback, mutation, validation, and recovery designs converge |
 | Runtime-adjacent operations | Current scope intentionally excludes runtime logs, sessions, gateway, containers, cron, secrets | Separate runtime-adjacent ADRs and policies |
 
 ## Maintenance Rule

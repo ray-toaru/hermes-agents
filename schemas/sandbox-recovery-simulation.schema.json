@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/sandbox-recovery-simulation.schema.json",
+  "title": "Hermes AgentOps Sandbox Recovery Simulation Evidence",
+  "description": "Read-only recovery simulation evidence derived from sandbox mutation audit evidence. This schema does not enable real apply, authorize mutation, mutate source profiles, release locks, execute rollback, read secrets, mutate runtime state, or orchestrate business work.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "sandbox_recovery_simulation_id",
+    "sandbox_audit_record_id",
+    "integrated_sandbox_run_id",
+    "change_id",
+    "agent",
+    "operator",
+    "repository",
+    "default_branch",
+    "generated_at",
+    "generated_by",
+    "sandbox_only",
+    "production_recovery",
+    "mutation_enabled",
+    "apply_authorized",
+    "status",
+    "scenario",
+    "hypothetical",
+    "source_profiles_hash_before",
+    "source_profiles_hash_after",
+    "source_profiles_unchanged",
+    "evidence_hashes",
+    "observed_state",
+    "simulation_result",
+    "boundaries"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "sandbox_recovery_simulation_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_sandbox_recovery_simulation$"},
+    "sandbox_audit_record_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_sandbox_mutation_audit$"},
+    "integrated_sandbox_run_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_integrated_sandbox_mutation_run$"},
+    "change_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}$"},
+    "agent": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "operator": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "repository": {"type": "string", "minLength": 1},
+    "default_branch": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "generated_by": {"type": "string", "const": "simulate-sandbox-recovery"},
+    "sandbox_only": {"type": "boolean", "const": true},
+    "production_recovery": {"type": "boolean", "const": false},
+    "mutation_enabled": {"type": "boolean", "const": false},
+    "apply_authorized": {"type": "boolean", "const": false},
+    "status": {"type": "string", "enum": ["no_recovery_required_recorded", "recovery_required_recorded", "failed_closed"]},
+    "scenario": {"type": "string", "enum": ["auto", "no_recovery_required", "pre_apply_gate_failed", "patch_apply_failed", "validation_failed", "rollback_point_missing", "rollback_point_mismatch", "lock_stale", "lock_recovery_required", "audit_write_failed", "unknown_state"]},
+    "hypothetical": {"type": "boolean"},
+    "source_profiles_hash_before": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source_profiles_hash_after": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source_profiles_unchanged": {"type": "boolean", "const": true},
+    "evidence_hashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sandbox_audit_record_sha256", "integrated_sandbox_run_sha256", "authenticated_approval_sha256", "apply_readiness_sha256", "real_apply_lock_sha256", "rollback_point_sha256", "post_apply_validation_sha256"],
+      "properties": {
+        "sandbox_audit_record_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "integrated_sandbox_run_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "authenticated_approval_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "apply_readiness_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "real_apply_lock_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "rollback_point_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "post_apply_validation_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
+      }
+    },
+    "observed_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["audited_status", "audited_failure_stage", "audit_recovery_required", "audit_manual_review_required", "lock_evidence_present", "rollback_point_evidence_present", "post_apply_validation_evidence_present", "source_profiles_unchanged", "unknown_state"],
+      "properties": {
+        "audited_status": {"type": "string", "enum": ["success", "failed_closed"]},
+        "audited_failure_stage": {"type": ["string", "null"]},
+        "audit_recovery_required": {"type": "boolean"},
+        "audit_manual_review_required": {"type": "boolean", "const": true},
+        "lock_evidence_present": {"type": "boolean"},
+        "rollback_point_evidence_present": {"type": "boolean"},
+        "post_apply_validation_evidence_present": {"type": "boolean"},
+        "source_profiles_unchanged": {"type": "boolean", "const": true},
+        "unknown_state": {"type": "boolean"}
+      }
+    },
+    "simulation_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recovery_required", "manual_review_required", "rollback_candidate_available", "rollback_simulated", "rollback_executed", "lock_release_allowed", "lock_release_performed", "retry_allowed_without_manual_review", "next_action", "note"],
+      "properties": {
+        "recovery_required": {"type": "boolean"},
+        "manual_review_required": {"type": "boolean", "const": true},
+        "rollback_candidate_available": {"type": "boolean"},
+        "rollback_simulated": {"type": "boolean"},
+        "rollback_executed": {"type": "boolean", "const": false},
+        "lock_release_allowed": {"type": "boolean", "const": false},
+        "lock_release_performed": {"type": "boolean", "const": false},
+        "retry_allowed_without_manual_review": {"type": "boolean", "const": false},
+        "next_action": {"type": "string", "enum": ["no_recovery_action_required", "preserve_lock_and_request_manual_review", "manual_review_unknown_state"]},
+        "note": {"type": "string", "minLength": 1}
+      }
+    },
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["simulation_is_read_only", "sandbox_recovery_only", "does_not_authorize_apply", "does_not_mutate_source_profiles", "does_not_release_locks", "does_not_execute_rollback", "does_not_read_secret_values", "does_not_mutate_runtime_state", "business_orchestration_not_authorized"],
+      "properties": {
+        "simulation_is_read_only": {"type": "boolean", "const": true},
+        "sandbox_recovery_only": {"type": "boolean", "const": true},
+        "does_not_authorize_apply": {"type": "boolean", "const": true},
+        "does_not_mutate_source_profiles": {"type": "boolean", "const": true},
+        "does_not_release_locks": {"type": "boolean", "const": true},
+        "does_not_execute_rollback": {"type": "boolean", "const": true},
+        "does_not_read_secret_values": {"type": "boolean", "const": true},
+        "does_not_mutate_runtime_state": {"type": "boolean", "const": true},
+        "business_orchestration_not_authorized": {"type": "boolean", "const": true}
+      }
+    }
+  }
+}

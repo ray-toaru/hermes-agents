@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/integrated-sandbox-mutation-run.schema.json",
+  "title": "Hermes AgentOps Integrated Sandbox Mutation Run Evidence",
+  "description": "Evidence emitted by the integrated sandbox-only mutation pipeline. This schema does not enable real apply, authorize mutation, mutate source profiles, release locks, execute rollback, create production audit records, read secrets, mutate runtime state, or orchestrate business work.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "integrated_sandbox_run_id",
+    "change_id",
+    "agent",
+    "operator",
+    "generated_at",
+    "generated_by",
+    "sandbox_only",
+    "mutation_enabled",
+    "apply_authorized",
+    "status",
+    "failure_stage",
+    "source_profiles_hash_before",
+    "source_profiles_hash_after",
+    "source_profiles_unchanged",
+    "steps",
+    "artifacts",
+    "assertions",
+    "boundaries",
+    "failure_recovery"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "integrated_sandbox_run_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_integrated_sandbox_mutation_run$"},
+    "change_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}$"},
+    "agent": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "operator": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "generated_by": {"type": "string", "const": "run-integrated-sandbox-mutation"},
+    "sandbox_only": {"type": "boolean", "const": true},
+    "mutation_enabled": {"type": "boolean", "const": false},
+    "apply_authorized": {"type": "boolean", "const": false},
+    "status": {"type": "string", "enum": ["success", "failed_closed"]},
+    "failure_stage": {"type": ["string", "null"], "enum": [null, "copy_workspace", "change_verify", "authenticated_approval", "pre_apply_plan", "apply_lock_analysis", "apply_readiness", "pre_apply_commit", "sandbox_lock", "rollback_point", "post_apply_validation", "source_immutability", "evidence_validation"]},
+    "source_profiles_hash_before": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source_profiles_hash_after": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source_profiles_unchanged": {"type": "boolean", "const": true},
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status", "exit_code", "stdout_sha256", "stderr_sha256", "redacted_summary"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{1,127}$"},
+          "status": {"type": "string", "enum": ["success", "failed"]},
+          "exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
+          "stdout_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "stderr_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "redacted_summary": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "change_verify",
+        "authenticated_approval",
+        "pre_apply_plan",
+        "apply_lock_analysis",
+        "apply_readiness",
+        "real_apply_lock",
+        "rollback_point",
+        "post_apply_validation"
+      ],
+      "properties": {
+        "change_verify": {"$ref": "#/$defs/artifact"},
+        "authenticated_approval": {"$ref": "#/$defs/artifact"},
+        "pre_apply_plan": {"$ref": "#/$defs/artifact"},
+        "apply_lock_analysis": {"$ref": "#/$defs/artifact"},
+        "apply_readiness": {"$ref": "#/$defs/artifact"},
+        "real_apply_lock": {"$ref": "#/$defs/artifact"},
+        "rollback_point": {"$ref": "#/$defs/artifact"},
+        "post_apply_validation": {"$ref": "#/$defs/artifact"}
+      }
+    },
+    "assertions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authenticated_approval_verified",
+        "readiness_complete_not_authorized",
+        "sandbox_lock_acquired",
+        "rollback_point_created",
+        "post_apply_validation_success",
+        "post_apply_validation_same_sandbox",
+        "source_profiles_unchanged",
+        "does_not_authorize_apply"
+      ],
+      "properties": {
+        "authenticated_approval_verified": {"type": "boolean"},
+        "readiness_complete_not_authorized": {"type": "boolean"},
+        "sandbox_lock_acquired": {"type": "boolean"},
+        "rollback_point_created": {"type": "boolean"},
+        "post_apply_validation_success": {"type": "boolean"},
+        "post_apply_validation_same_sandbox": {"type": "boolean"},
+        "source_profiles_unchanged": {"type": "boolean", "const": true},
+        "does_not_authorize_apply": {"type": "boolean", "const": true}
+      }
+    },
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "temporary_workspace_only",
+        "does_not_enable_apply",
+        "does_not_mutate_source_profiles",
+        "does_not_release_locks",
+        "does_not_execute_rollback",
+        "does_not_create_production_audit_records",
+        "does_not_read_secret_values",
+        "does_not_mutate_runtime_state",
+        "business_orchestration_not_authorized"
+      ],
+      "properties": {
+        "temporary_workspace_only": {"type": "boolean", "const": true},
+        "does_not_enable_apply": {"type": "boolean", "const": true},
+        "does_not_mutate_source_profiles": {"type": "boolean", "const": true},
+        "does_not_release_locks": {"type": "boolean", "const": true},
+        "does_not_execute_rollback": {"type": "boolean", "const": true},
+        "does_not_create_production_audit_records": {"type": "boolean", "const": true},
+        "does_not_read_secret_values": {"type": "boolean", "const": true},
+        "does_not_mutate_runtime_state": {"type": "boolean", "const": true},
+        "business_orchestration_not_authorized": {"type": "boolean", "const": true}
+      }
+    },
+    "failure_recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manual_review_required", "rollback_not_executed_by_runner", "lock_release_not_performed_by_runner", "note"],
+      "properties": {
+        "manual_review_required": {"type": "boolean", "const": true},
+        "rollback_not_executed_by_runner": {"type": "boolean", "const": true},
+        "lock_release_not_performed_by_runner": {"type": "boolean", "const": true},
+        "note": {"type": "string", "minLength": 1}
+      }
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "path", "sha256"],
+      "properties": {
+        "status": {"type": "string", "enum": ["present", "missing", "failed"]},
+        "path": {"type": ["string", "null"], "pattern": "^[^\\\\]*$"},
+        "sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
+      }
+    }
+  }
+}

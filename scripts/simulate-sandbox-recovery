@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+"""Simulate fail-closed sandbox recovery decisions.
+
+This command consumes sandbox mutation audit evidence and emits a read-only
+recovery simulation record. It never releases locks, executes rollback,
+authorizes apply, mutates source profiles, reads secrets, mutates runtime state,
+or orchestrates business work.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+from agentops_common import load_json, load_yaml, schema_error_messages, sha256_file, utc_now_compact, utc_now_iso
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+SCENARIOS = (
+    "auto",
+    "no_recovery_required",
+    "pre_apply_gate_failed",
+    "patch_apply_failed",
+    "validation_failed",
+    "rollback_point_missing",
+    "rollback_point_mismatch",
+    "lock_stale",
+    "lock_recovery_required",
+    "audit_write_failed",
+    "unknown_state",
+)
+
+
+def boundaries() -> dict[str, bool]:
+    return {
+        "simulation_is_read_only": True,
+        "sandbox_recovery_only": True,
+        "does_not_authorize_apply": True,
+        "does_not_mutate_source_profiles": True,
+        "does_not_release_locks": True,
+        "does_not_execute_rollback": True,
+        "does_not_read_secret_values": True,
+        "does_not_mutate_runtime_state": True,
+        "business_orchestration_not_authorized": True,
+    }
+
+
+def resolve_path(root: Path, value: str | None) -> Path | None:
+    if value is None:
+        return None
+    path = Path(value)
+    return path if path.is_absolute() else root / path
+
+
+def validate_input_audit(root: Path, audit: Any, audit_path: Path) -> list[str]:
+    schema = load_json(root / "schemas" / "sandbox-mutation-audit-record.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    errors = schema_error_messages(audit, validator, audit_path)
+    if not isinstance(audit, dict):
+        return errors
+    if audit.get("sandbox_only") is not True or audit.get("production_audit") is not False:
+        errors.append(f"{audit_path}: input audit must be sandbox-only and non-production")
+    if audit.get("mutation_enabled") is not False or audit.get("apply_authorized") is not False:
+        errors.append(f"{audit_path}: input audit must not enable mutation or authorize apply")
+    if audit.get("source_profiles_unchanged") is not True:
+        errors.append(f"{audit_path}: input audit must prove source profiles unchanged")
+    return errors
+
+
+def infer_scenario(audit: dict[str, Any]) -> str:
+    if audit.get("audited_status") == "success" and audit.get("recovery_required") is False:
+        return "no_recovery_required"
+    failure_stage = audit.get("audited_failure_stage")
+    if failure_stage in {"change_verify", "pre_apply_plan", "apply_lock_analysis", "apply_readiness", "approval_verification"}:
+        return "pre_apply_gate_failed"
+    if failure_stage in {"post_apply_validation"}:
+        return "validation_failed"
+    if failure_stage in {"rollback_point"}:
+        return "rollback_point_missing"
+    if failure_stage in {"sandbox_lock"}:
+        return "lock_recovery_required"
+    if failure_stage in {"copy_workspace", "source_immutability", "evidence_validation"}:
+        return "unknown_state"
+    if failure_stage is None and audit.get("recovery_required") is True:
+        return "unknown_state"
+    return "unknown_state"
+
+
+def status_for_scenario(scenario: str) -> str:
+    if scenario == "no_recovery_required":
+        return "no_recovery_required_recorded"
+    if scenario == "unknown_state":
+        return "failed_closed"
+    return "recovery_required_recorded"
+
+
+def next_action_for_scenario(scenario: str) -> str:
+    if scenario == "no_recovery_required":
+        return "no_recovery_action_required"
+    if scenario == "unknown_state":
+        return "manual_review_unknown_state"
+    return "preserve_lock_and_request_manual_review"
+
+
+def note_for_scenario(scenario: str, hypothetical: bool) -> str:
+    prefix = "Hypothetical sandbox recovery simulation" if hypothetical else "Sandbox recovery simulation"
+    notes = {
+        "no_recovery_required": "records that the sandbox audit did not require recovery; it still does not authorize apply or lock release.",
+        "pre_apply_gate_failed": "preserves fail-closed state because a required pre-apply gate failed before mutation-adjacent work.",
+        "patch_apply_failed": "preserves fail-closed state because a patch application failure may leave intent unproven.",
+        "validation_failed": "preserves lock-equivalent state and requires manual review after post-apply validation failure.",
+        "rollback_point_missing": "requires manual review because rollback evidence is missing or unavailable.",
+        "rollback_point_mismatch": "requires manual review because rollback evidence cannot be trusted as matching the current run.",
+        "lock_stale": "keeps stale locks blocking until explicit manual recovery, matching the project fail-closed invariant.",
+        "lock_recovery_required": "keeps recovery-required locks blocking until explicit manual recovery.",
+        "audit_write_failed": "requires manual review because audit capture failure makes the mutation-adjacent state incomplete.",
+        "unknown_state": "fails closed because the observed state cannot be mapped to a safe automatic recovery path.",
+    }
+    return f"{prefix} {notes.get(scenario, notes['unknown_state'])}"
+
+
+def build_observed_state(audit: dict[str, Any], scenario: str) -> dict[str, Any]:
+    hashes = audit.get("evidence_hashes") or {}
+    unknown = scenario == "unknown_state"
+    return {
+        "audited_status": audit.get("audited_status"),
+        "audited_failure_stage": audit.get("audited_failure_stage"),
+        "audit_recovery_required": bool(audit.get("recovery_required")),
+        "audit_manual_review_required": audit.get("manual_review_required") is True,
+        "lock_evidence_present": isinstance(hashes.get("real_apply_lock_sha256"), str),
+        "rollback_point_evidence_present": isinstance(hashes.get("rollback_point_sha256"), str),
+        "post_apply_validation_evidence_present": isinstance(hashes.get("post_apply_validation_sha256"), str),
+        "source_profiles_unchanged": audit.get("source_profiles_unchanged") is True,
+        "unknown_state": unknown,
+    }
+
+
+def build_result(scenario: str, observed: dict[str, Any], hypothetical: bool) -> dict[str, Any]:
+    recovery_required = scenario != "no_recovery_required"
+    rollback_candidate_available = bool(observed.get("rollback_point_evidence_present")) and scenario not in {
+        "no_recovery_required",
+        "rollback_point_missing",
+        "rollback_point_mismatch",
+    }
+    rollback_simulated = recovery_required and rollback_candidate_available
+    return {
+        "recovery_required": recovery_required,
+        "manual_review_required": True,
+        "rollback_candidate_available": rollback_candidate_available,
+        "rollback_simulated": rollback_simulated,
+        "rollback_executed": False,
+        "lock_release_allowed": False,
+        "lock_release_performed": False,
+        "retry_allowed_without_manual_review": False,
+        "next_action": next_action_for_scenario(scenario),
+        "note": note_for_scenario(scenario, hypothetical),
+    }
+
+
+def build_simulation(root: Path, args: argparse.Namespace) -> dict[str, Any]:
+    audit_path = resolve_path(root, args.audit_record)
+    if audit_path is None:
+        raise RuntimeError("audit record path is required")
+    audit = load_yaml(audit_path)
+    errors = validate_input_audit(root, audit, audit_path)
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    if not isinstance(audit, dict):
+        raise RuntimeError("audit record must be a mapping")
+
+    scenario = infer_scenario(audit) if args.scenario == "auto" else args.scenario
+    hypothetical = args.scenario != "auto"
+    observed = build_observed_state(audit, scenario)
+    result = build_result(scenario, observed, hypothetical)
+    hashes = audit.get("evidence_hashes") or {}
+    integrated_hash = hashes.get("integrated_sandbox_run_sha256")
+    if not isinstance(integrated_hash, str):
+        raise RuntimeError("audit must include integrated_sandbox_run_sha256")
+
+    integrated_path = resolve_path(root, args.integrated_run)
+    if integrated_path is not None and sha256_file(integrated_path) != integrated_hash:
+        raise RuntimeError("integrated run hash does not match audit evidence")
+
+    parts = str(audit.get("change_id")).split("_")
+    if len(parts) != 3:
+        raise RuntimeError("change_id must have timestamp_agent_digest format")
+
+    return {
+        "schema_version": 1,
+        "sandbox_recovery_simulation_id": f"{utc_now_compact()}_{parts[1]}_{parts[2]}_sandbox_recovery_simulation",
+        "sandbox_audit_record_id": audit.get("sandbox_audit_record_id"),
+        "integrated_sandbox_run_id": audit.get("integrated_sandbox_run_id"),
+        "change_id": audit.get("change_id"),
+        "agent": audit.get("agent"),
+        "operator": audit.get("operator"),
+        "repository": audit.get("repository"),
+        "default_branch": audit.get("default_branch"),
+        "generated_at": args.generated_at or utc_now_iso(),
+        "generated_by": "simulate-sandbox-recovery",
+        "sandbox_only": True,
+        "production_recovery": False,
+        "mutation_enabled": False,
+        "apply_authorized": False,
+        "status": status_for_scenario(scenario),
+        "scenario": scenario,
+        "hypothetical": hypothetical,
+        "source_profiles_hash_before": audit.get("source_profiles_hash_before"),
+        "source_profiles_hash_after": audit.get("source_profiles_hash_after"),
+        "source_profiles_unchanged": audit.get("source_profiles_unchanged") is True,
+        "evidence_hashes": {
+            "sandbox_audit_record_sha256": sha256_file(audit_path),
+            "integrated_sandbox_run_sha256": integrated_hash,
+            "authenticated_approval_sha256": hashes.get("authenticated_approval_sha256"),
+            "apply_readiness_sha256": hashes.get("apply_readiness_sha256"),
+            "real_apply_lock_sha256": hashes.get("real_apply_lock_sha256"),
+            "rollback_point_sha256": hashes.get("rollback_point_sha256"),
+            "post_apply_validation_sha256": hashes.get("post_apply_validation_sha256"),
+        },
+        "observed_state": observed,
+        "simulation_result": result,
+        "boundaries": boundaries(),
+    }
+
+
+def validate_simulation(root: Path, simulation: dict[str, Any]) -> list[str]:
+    schema = load_json(root / "schemas" / "sandbox-recovery-simulation.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    errors = schema_error_messages(simulation, validator, Path("<generated-sandbox-recovery-simulation>"))
+    if simulation.get("mutation_enabled") is not False or simulation.get("apply_authorized") is not False:
+        errors.append("simulation must not enable mutation or authorize apply")
+    result = simulation.get("simulation_result") or {}
+    if result.get("rollback_executed") is not False or result.get("lock_release_allowed") is not False:
+        errors.append("simulation must not execute rollback or allow lock release")
+    if result.get("manual_review_required") is not True:
+        errors.append("simulation must require manual review")
+    if simulation.get("source_profiles_unchanged") is not True:
+        errors.append("simulation requires source profiles unchanged evidence")
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="simulate-sandbox-recovery")
+    parser.add_argument("audit_record", help="Path to sandbox mutation audit record YAML")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--integrated-run", help="Optional integrated sandbox run YAML for hash binding verification")
+    parser.add_argument("--scenario", choices=SCENARIOS, default="auto")
+    parser.add_argument("--generated-at")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    try:
+        simulation = build_simulation(root, args)
+        errors = validate_simulation(root, simulation)
+    except Exception as exc:
+        print(f"sandbox recovery simulation failed: {exc}", file=sys.stderr)
+        return 2
+    if errors:
+        print(yaml.safe_dump(simulation, sort_keys=False), end="")
+        for error in errors:
+            print(error, file=sys.stderr)
+        return 2
+    print(yaml.safe_dump(simulation, sort_keys=False), end="")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

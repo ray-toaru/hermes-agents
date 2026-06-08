@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Validate sandbox recovery simulation evidence.
+
+The checker is read-only. It verifies schema and optional hash binding to the
+sandbox mutation audit and integrated sandbox run evidence files. It does not
+authorize apply, mutate profiles, release locks, execute rollback, read secrets,
+mutate runtime state, or orchestrate business work.
+"""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+
+from agentops_common import load_json, load_yaml, schema_error_messages, sha256_file, agent_from_change_id
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def resolve_path(root: Path, value: str | None) -> Path | None:
+    if value is None:
+        return None
+    path = Path(value)
+    return path if path.is_absolute() else root / path
+
+
+def validate_binding(record: dict[str, Any], *, audit_path: Path | None, integrated_run_path: Path | None) -> list[str]:
+    errors: list[str] = []
+    hashes = record.get("evidence_hashes") or {}
+    if audit_path is not None:
+        expected = hashes.get("sandbox_audit_record_sha256")
+        actual = sha256_file(audit_path)
+        if expected != actual:
+            errors.append("sandbox_audit_record_sha256 does not match")
+        audit = load_yaml(audit_path)
+        if isinstance(audit, dict):
+            for field in (
+                "sandbox_audit_record_id",
+                "integrated_sandbox_run_id",
+                "change_id",
+                "agent",
+                "operator",
+                "repository",
+                "default_branch",
+            ):
+                if record.get(field) != audit.get(field):
+                    errors.append(f"{field} does not match sandbox audit record")
+            audit_hashes = audit.get("evidence_hashes") or {}
+            if hashes.get("integrated_sandbox_run_sha256") != audit_hashes.get("integrated_sandbox_run_sha256"):
+                errors.append("integrated_sandbox_run_sha256 does not match audit binding")
+        else:
+            errors.append("sandbox audit record must be a mapping")
+    if integrated_run_path is not None:
+        expected = hashes.get("integrated_sandbox_run_sha256")
+        actual = sha256_file(integrated_run_path)
+        if expected != actual:
+            errors.append("integrated_sandbox_run_sha256 does not match")
+    return errors
+
+
+def validate_record(
+    root: Path,
+    record: Any,
+    record_path: Path,
+    validator: jsonschema.Draft202012Validator,
+    *,
+    audit_path: Path | None,
+    integrated_run_path: Path | None,
+) -> list[str]:
+    errors = schema_error_messages(record, validator, record_path)
+    if not isinstance(record, dict):
+        return errors
+    change_id = record.get("change_id")
+    if isinstance(change_id, str):
+        expected_agent = agent_from_change_id(change_id)
+        if expected_agent and record.get("agent") != expected_agent:
+            errors.append(f"{record_path}: agent must match the agent segment in change_id")
+    if record.get("sandbox_only") is not True or record.get("production_recovery") is not False:
+        errors.append(f"{record_path}: record must be sandbox-only and non-production")
+    if record.get("mutation_enabled") is not False or record.get("apply_authorized") is not False:
+        errors.append(f"{record_path}: record must not enable mutation or authorize apply")
+    if record.get("source_profiles_unchanged") is not True:
+        errors.append(f"{record_path}: record must prove source profiles unchanged")
+    result = record.get("simulation_result") or {}
+    if result.get("manual_review_required") is not True:
+        errors.append(f"{record_path}: manual review must be required")
+    if result.get("rollback_executed") is not False:
+        errors.append(f"{record_path}: rollback must not be executed")
+    if result.get("lock_release_allowed") is not False or result.get("lock_release_performed") is not False:
+        errors.append(f"{record_path}: lock release must not be allowed or performed")
+    if result.get("retry_allowed_without_manual_review") is not False:
+        errors.append(f"{record_path}: retry must not be allowed without manual review")
+    if record.get("scenario") == "unknown_state" and record.get("status") != "failed_closed":
+        errors.append(f"{record_path}: unknown_state must fail closed")
+    errors.extend(validate_binding(record, audit_path=audit_path, integrated_run_path=integrated_run_path))
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="check-sandbox-recovery-simulation")
+    parser.add_argument("record_paths", nargs="+")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--audit-record")
+    parser.add_argument("--integrated-run")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    schema = load_json(root / "schemas" / "sandbox-recovery-simulation.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    audit_path = resolve_path(root, args.audit_record)
+    integrated_run_path = resolve_path(root, args.integrated_run)
+    all_errors: list[str] = []
+    for value in args.record_paths:
+        path = Path(value)
+        if not path.is_absolute():
+            path = root / path
+        try:
+            record = load_yaml(path)
+        except Exception as exc:
+            all_errors.append(f"{path}: {exc}")
+            continue
+        all_errors.extend(
+            validate_record(
+                root,
+                record,
+                path,
+                validator,
+                audit_path=audit_path,
+                integrated_run_path=integrated_run_path,
+            )
+        )
+    if all_errors:
+        for error in all_errors:
+            print(error)
+        return 1
+    print("sandbox recovery simulation records valid")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
