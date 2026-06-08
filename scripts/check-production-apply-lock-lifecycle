@@ -140,6 +140,12 @@ def validate_transitions(record: dict[str, Any], record_path: Path) -> list[str]
         end = item.get("to")
         if start not in states or end not in states:
             errors.append(f"{record_path}: transition references unknown state: {start!r}->{end!r}")
+        if end == "released" and start != "release_eligible":
+            errors.append(f"{record_path}: forbidden transition into released from {start!r}; only release_eligible may release")
+        if start == "recovery_required" and end != "preserved_for_review":
+            errors.append(f"{record_path}: recovery_required may only transition to preserved_for_review, not {end!r}")
+        if start == "preserved_for_review":
+            errors.append(f"{record_path}: preserved_for_review is terminal and must not transition to {end!r}")
         transition_pairs.add((start, end))
     required_pairs = {
         ("not_acquired", "acquired"),
