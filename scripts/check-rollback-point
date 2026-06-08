@@ -16,27 +16,9 @@ from typing import Any
 import jsonschema
 import yaml
 
+from agentops_common import load_yaml, load_json, sha256_file, agent_from_change_id
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
-
-
-def load_yaml(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
-
-
-def load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def agent_from_change_id(change_id: str) -> str | None:
-    parts = change_id.split("_")
-    return parts[1] if len(parts) == 3 else None
-
 
 def validate_record(root: Path, record: Any, path: Path, validator: jsonschema.Draft202012Validator, *, require_evidence_files: bool) -> list[str]:
     errors: list[str] = []
@@ -72,14 +54,12 @@ def validate_record(root: Path, record: Any, path: Path, validator: jsonschema.D
         errors.append(f"{path}: pre_apply_commit must equal current_head in the rollback point contract")
     return errors
 
-
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="check-rollback-point")
     parser.add_argument("record_paths", nargs="*")
     parser.add_argument("--root", default=str(DEFAULT_ROOT))
     parser.add_argument("--require-evidence-files", action="store_true")
     return parser.parse_args(argv)
-
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
@@ -99,7 +79,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print("rollback point validation passed")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

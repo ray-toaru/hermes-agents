@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import os
 import shutil
 import subprocess
@@ -25,6 +24,8 @@ from typing import Any
 import jsonschema
 import yaml
 
+from agentops_common import load_json, load_yaml, run_command, run_internal_python_command, sha256_text, utc_now_compact, utc_now_iso
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 FORBIDDEN_PATH_PARTS = {".git", "logs", "sessions", "workspace", "workspaces", "runtime"}
 FORBIDDEN_FILENAMES = {".env", "secrets.json", "state.db"}
@@ -35,28 +36,6 @@ ALLOWLIST = {
         "argv": [sys.executable, "scripts/hermes-agentops", "validate", "-v"],
     }
 }
-
-
-def load_yaml(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
-
-
-def load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def utc_now_compact() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
 def hash_tree(path: Path) -> str:
@@ -95,13 +74,7 @@ def copy_workspace(root: Path, sandbox: Path) -> None:
 
 def validate_structured_command(root: Path, record_path: Path) -> tuple[int, str]:
     checker = DEFAULT_ROOT / "scripts" / "check-structured-command"
-    process = subprocess.run(
-        [sys.executable, str(checker), "--root", str(root), str(record_path)],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    process = run_internal_python_command([sys.executable, str(checker), "--root", str(root), str(record_path)], root)
     return process.returncode, process.stdout + process.stderr
 
 
@@ -186,16 +159,15 @@ def run_sandbox(root: Path, record_path: Path) -> tuple[int, dict[str, Any] | No
         env_record = record.get("environment", {})
         allowed = env_record.get("allowed_keys", []) if isinstance(env_record, dict) else []
         env = {key: os.environ[key] for key in allowed if isinstance(key, str) and key in os.environ}
-        process = subprocess.run(
-            entry["argv"],
-            cwd=cwd,
-            env=env,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=int(record.get("timeout_seconds", 60)),
-            check=False,
-        )
+        if entry["argv"][0] == sys.executable:
+            process = run_internal_python_command(entry["argv"], cwd)
+        else:
+            process = run_command(
+                entry["argv"],
+                cwd,
+                env=env,
+                timeout=int(record.get("timeout_seconds", 60)),
+            )
     source_hash_after = hash_tree(root / "profiles")
     report = build_report(
         record=record,

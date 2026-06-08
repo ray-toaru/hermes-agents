@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 
 from test_change_workflow import init_git_profile, prepare_root, write_change
+from agentops_test_utils import run_script
 
 ROOT = Path(__file__).resolve().parents[1]
 GENERATOR = ROOT / "scripts" / "generate-pre-apply-plan"
@@ -13,13 +14,7 @@ CHECKER = ROOT / "scripts" / "check-pre-apply-plan"
 
 
 def run_generator(root: Path, change_id: str, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["python", str(GENERATOR), change_id, "--root", str(root), *args],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    return run_script(GENERATOR, change_id, "--root", str(root), *args)
 
 
 def test_generate_pre_apply_plan_for_verified_change(tmp_path: Path) -> None:
@@ -41,14 +36,7 @@ def test_generate_pre_apply_plan_for_verified_change(tmp_path: Path) -> None:
     assert plan["proposal_diff_sha256"] == proposal["diff_sha256"]
     assert plan["audit"]["record_path"] == f"changes/{change_id}/pre-apply-plan.yaml"
 
-    check = subprocess.run(
-        ["python", str(CHECKER), str(plan_path)],
-        cwd=root,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    check = run_script(CHECKER, str(plan_path))
     assert check.returncode == 0, check.stdout + check.stderr
 
 

@@ -11,9 +11,6 @@ read secrets, mutate runtime state, or authorize apply.
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,27 +19,12 @@ from typing import Any
 import jsonschema
 import yaml
 
+from agentops_common import load_json, load_yaml, run_command, sha256_file, sha256_text
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 LOCK_PATH = Path(".hermes-agentops") / "locks" / "real-apply.lock"
 IGNORED_GOVERNANCE_PATHS = {LOCK_PATH.as_posix()}
 
-
-def load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def load_yaml(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
-
-
-def sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def utc_now() -> datetime:
@@ -56,13 +38,12 @@ def iso(value: datetime) -> str:
 def compact(value: datetime) -> str:
     return value.strftime("%Y%m%dT%H%M%SZ")
 
-
 def repository_root_sha256(root: Path) -> str:
     return sha256_text(str(root.resolve()))
 
 
-def run_git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+def run_git(root: Path, *args: str):
+    return run_command(["git", *args], root)
 
 
 def current_head(root: Path) -> str:

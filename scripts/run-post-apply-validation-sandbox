@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import os
 import shutil
 import subprocess
@@ -27,6 +26,8 @@ from typing import Any
 import jsonschema
 import yaml
 
+from agentops_common import copy_workspace_dirs, load_json, load_yaml, run_command, run_internal_python_command, sha256_text, utc_now_iso
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 COPY_DIRS = ("profiles", "policies", "schemas", "scripts", "inventory")
 FORBIDDEN_PATH_PARTS = {".git", "logs", "sessions", "workspace", "workspaces", "runtime"}
@@ -36,20 +37,6 @@ VALIDATION_COMMANDS = (
     ("agentops.validate-profiles", [sys.executable, "scripts/hermes-agentops", "validate", "-v"]),
     ("git.diff-check", ["git", "diff", "--check"]),
 )
-
-
-def load_yaml(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
-
-
-def load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def hash_tree(path: Path) -> str:
@@ -66,46 +53,9 @@ def hash_tree(path: Path) -> str:
     return digest.hexdigest()
 
 
-def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
 
 def utc_now_compact() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-
-
-def run_command(argv: list[str], cwd: Path, *, input_text: str | None = None, timeout: int = 60) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        argv,
-        cwd=cwd,
-        input=input_text,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-        check=False,
-        env={},
-    )
-
-
-def validate_copy_source(path: Path) -> None:
-    for item in path.rglob("*"):
-        rel_parts = item.relative_to(path).parts
-        if item.is_symlink():
-            raise RuntimeError(f"refusing to copy symlink: {item}")
-        if any(part in FORBIDDEN_PATH_PARTS for part in rel_parts):
-            raise RuntimeError(f"refusing to copy runtime path: {item}")
-        if item.name in FORBIDDEN_FILENAMES:
-            raise RuntimeError(f"refusing to copy secret/runtime file: {item}")
-
-
-def copy_workspace(root: Path, sandbox: Path) -> None:
-    for dirname in COPY_DIRS:
-        source = root / dirname
-        if not source.exists():
-            continue
-        validate_copy_source(source)
-        shutil.copytree(source, sandbox / dirname, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
 
 def init_sandbox_git(sandbox: Path) -> None:
@@ -124,7 +74,7 @@ def init_sandbox_git(sandbox: Path) -> None:
 
 def verify_change(root: Path, change_id: str) -> subprocess.CompletedProcess[str]:
     tool = DEFAULT_ROOT / "scripts" / "hermes-agentops"
-    return subprocess.run(
+    return run_internal_python_command(
         [
             sys.executable,
             str(tool),
@@ -136,11 +86,7 @@ def verify_change(root: Path, change_id: str) -> subprocess.CompletedProcess[str
             "--check-git-clean",
             "--check-patch-applicable",
         ],
-        cwd=root,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
+        root,
     )
 
 
@@ -251,7 +197,13 @@ def run_validation(root: Path, change_id: str) -> tuple[int, dict[str, Any] | No
     try:
         with tempfile.TemporaryDirectory(prefix="hermes-post-apply-validation-") as tmpdir:
             sandbox = Path(tmpdir)
-            copy_workspace(root, sandbox)
+            copy_workspace_dirs(
+                root,
+                sandbox,
+                copy_dirs=COPY_DIRS,
+                forbidden_path_parts=FORBIDDEN_PATH_PARTS,
+                forbidden_filenames=FORBIDDEN_FILENAMES,
+            )
             init_sandbox_git(sandbox)
             diff_text = diff_path.read_text(encoding="utf-8")
             patch = run_command(["git", "apply"], sandbox, input_text=diff_text)
@@ -260,7 +212,7 @@ def run_validation(root: Path, change_id: str) -> tuple[int, dict[str, Any] | No
             else:
                 sandbox_patch_applied = True
                 for command_id, argv in VALIDATION_COMMANDS:
-                    process = run_command(argv, sandbox)
+                    process = run_internal_python_command(argv, sandbox)
                     validation_commands.append(command_record(command_id, argv, process))
     except Exception as exc:
         return 2, None, str(exc)

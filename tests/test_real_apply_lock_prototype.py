@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 
 from test_change_workflow import init_git_profile
+from agentops_test_utils import run_script
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "real-apply-lock-prototype"
@@ -14,13 +15,7 @@ PLAN_HASH = "c" * 64
 
 
 def run_lock(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["python", str(SCRIPT), "--root", str(root), *args],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    return run_script(SCRIPT, "--root", str(root), *args)
 
 
 def hash_tree(path: Path) -> str:

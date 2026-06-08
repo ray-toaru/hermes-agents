@@ -11,6 +11,7 @@ import yaml
 
 from test_change_workflow import run_agentops
 from test_structured_command_validator import valid_record, write_yaml
+from agentops_test_utils import run_script
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts" / "run-structured-command-sandbox"
@@ -25,13 +26,7 @@ def prepare_runtime_root(tmp_path: Path) -> Path:
 
 
 def run_runner(root: Path, record: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["python", str(RUNNER), "--root", str(root), str(record)],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    return run_script(RUNNER, "--root", str(root), str(record))
 
 
 def hash_tree(path: Path) -> str:

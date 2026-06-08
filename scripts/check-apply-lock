@@ -18,31 +18,9 @@ from typing import Any
 import jsonschema
 import yaml
 
+from agentops_common import load_yaml, load_json, parse_date_time, sha256_file, agent_from_change_id
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
-
-
-def load_yaml(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
-
-
-def load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def parse_date_time(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-
-def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def agent_from_change_id(change_id: str) -> str | None:
-    parts = change_id.split("_")
-    return parts[1] if len(parts) == 3 else None
-
 
 def validate_lock(
     root: Path,
@@ -86,14 +64,12 @@ def validate_lock(
             errors.append(f"{path}: required pre-apply plan file is missing: {plan_path.relative_to(root)}")
     return errors
 
-
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="check-apply-lock")
     parser.add_argument("lock_paths", nargs="*")
     parser.add_argument("--root", default=str(DEFAULT_ROOT))
     parser.add_argument("--require-plan-file", action="store_true")
     return parser.parse_args(argv)
-
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
@@ -116,7 +92,6 @@ def main(argv: list[str] | None = None) -> int:
 
     print("apply lock validation passed")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

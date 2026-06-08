@@ -20,7 +20,7 @@ Implemented capabilities are limited to:
 - read-only evidence validators;
 - read-only evidence-chain integration tests;
 - sandboxed patch application inside temporary directories only;
-- temporary-repository authenticated approval verifier fixtures;
+- temporary-repository authenticated approval verifier fixtures and read-only signed approval attestation verification;
 - structured command evidence validation;
 - validation-only structured command sandbox execution;
 - temporary-repository atomic real apply lock prototype;
@@ -33,7 +33,7 @@ None of these capabilities authorize or perform real mutation.
 
 | Prerequisite | ADR | Current State | Required Before Mutation |
 | --- | --- | --- | --- |
-| Authenticated approval verification | ADR 0008 | Approval YAML and identity evidence exist; authenticated approval evidence contract exists; fixture-only verifier skeleton exists, but no live GitHub or signed verifier exists. | Implement fail-closed live GitHub or signed-attestation approval verification bound to repository, change ID, diff hash, approver, decision, time, and threshold. |
+| Authenticated approval verification | ADR 0008 | Approval YAML and identity evidence exist; authenticated approval evidence contract exists; fixture verifier exists; signed-attestation verifier exists for local Ed25519 evidence and reviewed public trust roots; `live_github` still fails closed. | Integrate authenticated approval evidence into the future sandbox mutation pipeline; implement `live_github` separately if direct GitHub review verification is required. |
 | Structured command evidence and dispatch | ADR 0009 | Audit command strings are recorded-only evidence; structured command evidence contract exists; validation-only sandbox runner exists, but no mutation, rollback, or audit-capture runner exists. | Add reviewed allowlisted dispatch for mutation-adjacent classes only after lock, rollback, audit, and recovery prerequisites converge. |
 | Real repository-scoped exclusive lock | ADR 0010 | Apply-lock files are governance records only; temporary-repo atomic lock prototype exists, but it is not integrated with apply. | Integrate atomic lock acquisition/release with the future mutation pipeline, including failure preservation and recovery-required state. |
 | Rollback point creation | ADR 0010 | Rollback-point governance records can be validated; temporary-repo rollback point creator prototype exists, but it is not integrated with apply and does not execute rollback. | Integrate rollback point creation before mutation, including Git object existence, clean-state binding, and failure-safe evidence persistence. |
@@ -75,7 +75,7 @@ Rejected. The sandbox post-apply validation runner mutates only a temporary copi
 
 These should be separate reviewed PRs before any mutation command exists:
 
-1. **Authenticated approval verifier**: read-only verifier that checks live GitHub or signed approval evidence and emits an evidence record without mutation.
+1. **Authenticated approval verifier**: read-only signed-attestation verifier is implemented; live GitHub verification remains a separate optional slice before real mutation if direct GitHub review checks are required.
 2. **Structured command schema**: schema and validator for execution-adjacent command records; no command execution yet.
 3. **Command registry and validation-only runner**: allowlisted argv-only runner for validation commands in a temporary workspace; still no mutation.
 4. **Atomic real lock prototype**: repository-scoped lock acquisition/release in a temporary test repository, with stale/recovery behavior; no profile mutation.

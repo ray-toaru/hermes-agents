@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 
 from test_change_workflow import init_git_profile, run_agentops
+from agentops_test_utils import run_script
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK_SCRIPT = ROOT / "scripts" / "real-apply-lock-prototype"
@@ -16,33 +17,20 @@ PLAN_HASH = "d" * 64
 
 
 def run_lock(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["python", str(LOCK_SCRIPT), "--root", str(root), *args],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    return run_script(LOCK_SCRIPT, "--root", str(root), *args)
 
 
 def run_creator(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [
-            "python",
-            str(ROLLBACK_SCRIPT),
-            CHANGE_ID,
-            "--root",
-            str(root),
-            "--operator",
-            "operator",
-            "--pre-apply-plan-sha256",
-            PLAN_HASH,
-            *args,
-        ],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
+    return run_script(
+        ROLLBACK_SCRIPT,
+        CHANGE_ID,
+        "--root",
+        str(root),
+        "--operator",
+        "operator",
+        "--pre-apply-plan-sha256",
+        PLAN_HASH,
+        *args,
     )
 
 

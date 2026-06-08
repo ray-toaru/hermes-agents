@@ -23,16 +23,9 @@ from typing import Any
 
 import yaml
 
+from agentops_common import load_yaml, run_command, run_internal_python_command, utc_now_iso
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
-
-
-def load_yaml(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
-
-
-def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def hash_tree(path: Path) -> str:
@@ -49,17 +42,9 @@ def hash_tree(path: Path) -> str:
     return digest.hexdigest()
 
 
-def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def run_command(command: list[str], cwd: Path, *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, cwd=cwd, input=input_text, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-
-
 def verify_change(root: Path, change_id: str) -> subprocess.CompletedProcess[str]:
     tool = DEFAULT_ROOT / "scripts" / "hermes-agentops"
-    return run_command(
+    return run_internal_python_command(
         [
             sys.executable,
             str(tool),

@@ -8,21 +8,17 @@ from typing import Any
 import yaml
 
 from test_change_workflow import init_git_profile, prepare_root, write_change
+from agentops_test_utils import run_script
 
 ROOT = Path(__file__).resolve().parents[1]
 ACQUIRE = ROOT / "scripts" / "acquire-apply-lock"
 CHECK_LOCK = ROOT / "scripts" / "check-apply-lock"
+CLI = ROOT / "scripts" / "hermes-agentops"
 CHANGE_ID = "20260530T000000Z_agentops_aaaaaaaaaa"
 
 
 def run_acquire(root: Path, change_id: str = CHANGE_ID, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["python", str(ACQUIRE), change_id, "--root", str(root), *args],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    return run_script(ACQUIRE, change_id, "--root", str(root), *args)
 
 
 def git_head(root: Path) -> str:
@@ -143,13 +139,7 @@ def test_acquire_apply_lock_writes_valid_canonical_lock(tmp_path: Path) -> None:
     assert lock["base_commit"] == git_head(root)
     assert lock["pre_apply_plan_sha256"] == hashlib.sha256(plan_path.read_bytes()).hexdigest()
 
-    check = subprocess.run(
-        ["python", str(CHECK_LOCK), "--root", str(root), str(lock_path), "--require-plan-file"],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    check = run_script(CHECK_LOCK, "--root", str(root), str(lock_path), "--require-plan-file")
     assert check.returncode == 0, check.stdout + check.stderr
 
 
@@ -252,12 +242,6 @@ def test_acquire_apply_lock_requires_minimum_expiry(tmp_path: Path) -> None:
 
 def test_apply_remains_disabled_after_lock_acquisition_feature(tmp_path: Path) -> None:
     root = prepare_root(tmp_path)
-    result = subprocess.run(
-        ["python", str(ROOT / "scripts" / "hermes-agentops"), "--root", str(root), "apply", CHANGE_ID],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    result = run_script(CLI, "--root", str(root), "apply", CHANGE_ID)
     assert result.returncode == 1
     assert "intentionally not implemented" in result.stdout

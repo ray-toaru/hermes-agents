@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from agentops_test_utils import run_script
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKER = ROOT / "scripts" / "check-apply-readiness"
@@ -14,13 +15,7 @@ CHANGE_ID = "20260530T000000Z_agentops_aaaaaaaaaa"
 
 
 def run_checker(root: Path, record: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["python", str(CHECKER), "--root", str(root), str(record), *args],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    return run_script(CHECKER, "--root", str(root), str(record), *args)
 
 
 def write_yaml(path: Path, data: dict[str, Any]) -> Path:

@@ -18,6 +18,8 @@ from typing import Any
 import jsonschema
 import yaml
 
+from agentops_common import load_yaml, load_json, sha256_file, agent_from_change_id
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 SAFE_COMMAND_PREFIXES = (
     "python scripts/hermes-agentops changes verify ",
@@ -36,26 +38,6 @@ UNSAFE_COMMAND_TOKENS = (
     "docker ", "podman ", "systemctl ", "curl ", "wget ", "terraform apply", "kubectl ",
 )
 
-
-def load_yaml(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
-
-
-def load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def agent_from_change_id(change_id: str) -> str | None:
-    parts = change_id.split("_")
-    return parts[1] if len(parts) == 3 else None
-
-
 def is_safe_command(command: Any) -> bool:
     if not isinstance(command, str) or not command.strip():
         return False
@@ -64,7 +46,6 @@ def is_safe_command(command: Any) -> bool:
     if any(token in lowered for token in UNSAFE_COMMAND_TOKENS):
         return False
     return stripped.startswith(SAFE_COMMAND_PREFIXES)
-
 
 def validate_command_evidence(record: dict[str, Any], path: Path, errors: list[str]) -> None:
     for index, command_record in enumerate(record.get("commands") or []):
@@ -79,7 +60,6 @@ def validate_command_evidence(record: dict[str, Any], path: Path, errors: list[s
             errors.append(f"{label}: successful command evidence must have exit_code 0")
         if status == "failed" and exit_code == 0:
             errors.append(f"{label}: failed command evidence must have a non-zero exit_code")
-
 
 def validate_record(root: Path, record: Any, path: Path, validator: jsonschema.Draft202012Validator, *, require_evidence_files: bool) -> list[str]:
     errors: list[str] = []
@@ -123,14 +103,12 @@ def validate_record(root: Path, record: Any, path: Path, validator: jsonschema.D
     validate_command_evidence(record, path, errors)
     return errors
 
-
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="check-audit-record")
     parser.add_argument("record_paths", nargs="*")
     parser.add_argument("--root", default=str(DEFAULT_ROOT))
     parser.add_argument("--require-evidence-files", action="store_true")
     return parser.parse_args(argv)
-
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
@@ -150,7 +128,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print("audit record validation passed")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

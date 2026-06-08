@@ -15,25 +15,11 @@ from typing import Any
 import jsonschema
 import yaml
 
+from agentops_common import load_yaml, load_json, agent_from_change_id
+
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = ROOT / "schemas" / "pre-apply-plan.schema.json"
 DEFAULT_PLAN = ROOT / "docs" / "examples" / "pre-apply-plan.example.yaml"
-
-
-def load_yaml(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
-
-
-def load_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def agent_from_change_id(change_id: str) -> str | None:
-    parts = change_id.split("_")
-    return parts[1] if len(parts) == 3 else None
-
 
 def validate_plan(plan: Any, path: Path, validator: jsonschema.Draft202012Validator) -> list[str]:
     errors: list[str] = []
@@ -58,7 +44,6 @@ def validate_plan(plan: Any, path: Path, validator: jsonschema.Draft202012Valida
             errors.append(f"{path}: audit.record_path must equal {expected_audit_path}")
     return errors
 
-
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv or sys.argv[1:])
     plan_paths = [Path(value) for value in argv] if argv else [DEFAULT_PLAN]
@@ -79,7 +64,6 @@ def main(argv: list[str] | None = None) -> int:
 
     print("pre-apply plan validation passed")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
