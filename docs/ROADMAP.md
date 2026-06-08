@@ -2,7 +2,7 @@
 
 ## Current Position
 
-As of v2.8, Hermes AgentOps Manager is a repository governance and evidence-validation control plane with an integrated sandbox-only mutation evidence pipeline, sandbox mutation audit capture, sandbox recovery simulation, a structured real-apply readiness review, a design-only real apply package, and grouped CI test execution for the current sandbox-heavy suite.
+As of v2.9, Hermes AgentOps Manager is a repository governance and evidence-validation control plane with an integrated sandbox-only mutation evidence pipeline, sandbox mutation audit capture, sandbox recovery simulation, a structured real-apply readiness review, a design-only real apply package, a design/prototype-only production lock lifecycle contract, and grouped CI test execution for the current sandbox-heavy suite.
 
 Implemented capabilities are intentionally limited to:
 
@@ -18,9 +18,10 @@ Implemented capabilities are intentionally limited to:
 - sandbox mutation audit capture for integrated sandbox success/failure evidence without creating production audit records;
 - sandbox recovery simulation for success, failure, and unknown-state outcomes without releasing locks or executing rollback;
 - structured P5 real-apply readiness review evidence that permits design-only work while keeping implementation and enablement blocked;
-- design-only real apply pipeline, threat model, recovery runbook, and machine-checkable design contract evidence that still keeps `apply` disabled.
+- design-only real apply pipeline, threat model, recovery runbook, and machine-checkable design contract evidence that still keeps `apply` disabled;
+- design/prototype-only production lock lifecycle contract evidence that defines release eligibility and lock preservation rules without implementing release.
 
-`apply` remains disabled. Real locks, profile mutation, rollback execution, runtime management, secret reading, and business orchestration remain out of scope.
+`apply` remains disabled. Production lock release, profile mutation, rollback execution, runtime management, secret reading, and business orchestration remain out of scope.
 
 ## Near-Term Priorities
 
@@ -120,13 +121,19 @@ Status: implemented design-only in v2.8. See `docs/REAL_APPLY_PIPELINE_DESIGN.md
 
 The design package defines the future production pipeline, threat model, and recovery runbook, and validates that the design remains non-authorizing. It does not implement mutation, does not add feature flags, and verifies that `hermes-agentops apply` still fails closed.
 
+### P4.7: Production lock lifecycle contract
+
+Status: implemented design/prototype-only in v2.9. See `docs/PRODUCTION_LOCK_LIFECYCLE_DESIGN.md`, `docs/v2.9-production-lock-lifecycle.md`, and `docs/examples/production-apply-lock-lifecycle.yaml`.
+
+The contract defines future production lock states, release eligibility, preservation rules, and required evidence bindings. It does not implement real apply, does not release production locks, and verifies that `apply` remains disabled.
+
 ### P5: Explicit non-default mutation command
 
 Status: not ready to implement. Signed approval attestation verification, integrated sandbox mutation, sandbox audit, sandbox recovery simulation, and P5 review evidence are now implemented, but real mutation remains blocked. See `docs/P5_MUTATION_READINESS_REVIEW.md` and `docs/P5_REAL_APPLY_READINESS_REVIEW_V2.md`.
 
 A real mutation command remains blocked until the ADR 0008-0011 prerequisites are implemented and validated as separate fail-closed slices.
 
-The design-only real apply package now exists. The next safe steps are prerequisite production implementation slices that still keep `apply` disabled: production lock lifecycle integration, rollback execution design/validation, production audit capture, production post-apply validation, and production recovery state machine. Only after those slices and canary evidence converge, consider an explicit non-default mutation command. It must be separately reviewed and remain fail-closed behind all gates.
+The design-only real apply package and production lock lifecycle contract now exist. The next safe steps are prerequisite production implementation slices that still keep `apply` disabled: disabled lock acquire/preserve skeleton, rollback execution design/validation, production audit capture, production post-apply validation, and production recovery state machine. Only after those slices and canary evidence converge, consider an explicit non-default mutation command. It must be separately reviewed and remain fail-closed behind all gates.
 
 ## Always Out of Scope for This Track
 
@@ -135,4 +142,3 @@ The design-only real apply package now exists. The next safe steps are prerequis
 - bypassing Hermes provider resolution or tool registry;
 - reading real secret values;
 - mutating runtime sessions, logs, state databases, gateway, cron, containers, or systemd without a separate runtime-adjacent design.
-
