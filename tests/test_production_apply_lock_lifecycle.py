@@ -31,6 +31,10 @@ def validate_schema(record: dict[str, Any]) -> None:
     assert not errors, [error.message for error in errors]
 
 
+def add_transition(record: dict[str, Any], start: str, end: str) -> None:
+    record["allowed_transitions"].append({"from": start, "to": end, "requires": ["malicious extra transition"]})
+
+
 def test_production_lock_lifecycle_example_is_valid() -> None:
     record = load_example()
     validate_schema(record)
@@ -83,6 +87,49 @@ def test_rejects_recovery_state_allowing_release(tmp_path: Path) -> None:
     result = run_script(CHECKER, str(path), "--root", str(ROOT))
     assert result.returncode == 1
     assert "recovery_required" in result.stdout
+
+
+def test_rejects_extra_transition_from_acquired_to_released(tmp_path: Path) -> None:
+    record = load_example()
+    add_transition(record, "acquired", "released")
+    path = write_yaml(tmp_path / "contract.yaml", record)
+
+    result = run_script(CHECKER, str(path), "--root", str(ROOT))
+    assert result.returncode == 1
+    assert "forbidden transition into released" in result.stdout
+    assert "acquired" in result.stdout
+
+
+def test_rejects_extra_transition_from_recovery_required_to_released(tmp_path: Path) -> None:
+    record = load_example()
+    add_transition(record, "recovery_required", "released")
+    path = write_yaml(tmp_path / "contract.yaml", record)
+
+    result = run_script(CHECKER, str(path), "--root", str(ROOT))
+    assert result.returncode == 1
+    assert "forbidden transition into released" in result.stdout
+    assert "recovery_required" in result.stdout
+
+
+def test_rejects_extra_transition_from_preserved_for_review_to_released(tmp_path: Path) -> None:
+    record = load_example()
+    add_transition(record, "preserved_for_review", "released")
+    path = write_yaml(tmp_path / "contract.yaml", record)
+
+    result = run_script(CHECKER, str(path), "--root", str(ROOT))
+    assert result.returncode == 1
+    assert "forbidden transition into released" in result.stdout
+    assert "preserved_for_review" in result.stdout
+
+
+def test_rejects_extra_transition_out_of_preserved_for_review(tmp_path: Path) -> None:
+    record = load_example()
+    add_transition(record, "preserved_for_review", "acquired")
+    path = write_yaml(tmp_path / "contract.yaml", record)
+
+    result = run_script(CHECKER, str(path), "--root", str(ROOT))
+    assert result.returncode == 1
+    assert "preserved_for_review is terminal" in result.stdout
 
 
 def test_rejects_missing_evidence_binding(tmp_path: Path) -> None:
