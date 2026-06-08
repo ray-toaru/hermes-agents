@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""Validate real-apply design-only contract evidence.
+
+This checker is read-only. It validates that the real apply design package is
+explicitly design-only, that required design documents exist and carry boundary
+phrases, and that `hermes-agentops apply` still fails closed. It does not enable
+apply, mutate profiles, acquire or release locks, execute rollback, read
+secrets, mutate runtime state, or orchestrate business work.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+
+from agentops_common import (
+    is_safe_relative_path,
+    load_json,
+    load_yaml,
+    run_internal_python_command,
+    schema_error_messages,
+)
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+REQUIRED_STAGES = [
+    "input_selection",
+    "authenticated_approval_gate",
+    "readiness_gate",
+    "production_lock_acquisition",
+    "rollback_point_creation",
+    "pre_mutation_audit_start",
+    "mutation_command_dispatch",
+    "post_apply_validation",
+    "production_audit_completion",
+    "lock_release_or_preservation",
+]
+IMPLEMENTATION_BLOCKERS = {
+    "production lock lifecycle is not integrated",
+    "rollback execution is not implemented",
+    "production audit capture is not implemented",
+    "production post-apply validation is not integrated",
+    "production recovery state machine is not implemented",
+}
+
+
+def resolve_path(root: Path, value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else root / path
+
+
+def validate_design_status(record: dict[str, Any], record_path: Path) -> list[str]:
+    errors: list[str] = []
+    status = record.get("design_status") or {}
+    required = {
+        "design_only": True,
+        "ready_to_implement_real_apply": False,
+        "ready_to_enable_real_apply": False,
+        "apply_must_remain_disabled": True,
+        "mutation_code_added": False,
+        "feature_flag_allowed": False,
+    }
+    for key, expected in required.items():
+        if status.get(key) is not expected:
+            errors.append(f"{record_path}: design_status.{key} must be {expected!r}")
+    return errors
+
+
+def validate_boundaries(record: dict[str, Any], record_path: Path) -> list[str]:
+    errors: list[str] = []
+    boundaries = record.get("boundaries") or {}
+    for key, value in boundaries.items():
+        if value is not True:
+            errors.append(f"{record_path}: boundary {key} must be true")
+    return errors
+
+
+def validate_design_documents(record: dict[str, Any], root: Path, record_path: Path) -> list[str]:
+    errors: list[str] = []
+    docs = record.get("design_documents") or {}
+    for name, doc in docs.items():
+        if not isinstance(doc, dict):
+            continue
+        value = doc.get("path")
+        if not isinstance(value, str) or not is_safe_relative_path(value):
+            errors.append(f"{record_path}: design_documents.{name}.path is unsafe: {value!r}")
+            continue
+        path = resolve_path(root, value)
+        if not path.exists():
+            errors.append(f"{record_path}: design document does not exist: {value}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        for phrase in doc.get("required_phrases") or []:
+            if phrase not in text:
+                errors.append(f"{record_path}: {value} missing required phrase: {phrase!r}")
+    return errors
+
+
+def validate_pipeline_stages(record: dict[str, Any], record_path: Path) -> list[str]:
+    errors: list[str] = []
+    stages = record.get("pipeline_stages") or []
+    stage_to_order: dict[str, int] = {}
+    for item in stages:
+        if not isinstance(item, dict):
+            continue
+        stage = item.get("stage")
+        order = item.get("order")
+        if isinstance(stage, str) and isinstance(order, int):
+            if stage in stage_to_order:
+                errors.append(f"{record_path}: duplicate pipeline stage: {stage}")
+            stage_to_order[stage] = order
+    missing = [stage for stage in REQUIRED_STAGES if stage not in stage_to_order]
+    if missing:
+        errors.append(f"{record_path}: missing required pipeline stages: {missing}")
+    expected_order = {stage: index for index, stage in enumerate(REQUIRED_STAGES, start=1)}
+    for stage, expected in expected_order.items():
+        if stage_to_order.get(stage) != expected:
+            errors.append(f"{record_path}: pipeline stage {stage} must have order {expected}")
+    return errors
+
+
+def validate_blockers(record: dict[str, Any], record_path: Path) -> list[str]:
+    errors: list[str] = []
+    blockers = record.get("production_blockers") or []
+    seen = {item.get("blocker") for item in blockers if isinstance(item, dict)}
+    missing = sorted(IMPLEMENTATION_BLOCKERS - seen)
+    if missing:
+        errors.append(f"{record_path}: missing production blockers: {missing}")
+    for item in blockers:
+        if not isinstance(item, dict):
+            continue
+        blocks = set(item.get("blocks") or [])
+        if "real_apply_implementation" not in blocks or "real_apply_enablement" not in blocks:
+            errors.append(f"{record_path}: blocker {item.get('blocker')!r} must block implementation and enablement")
+    return errors
+
+
+def validate_apply_still_disabled(root: Path, record_path: Path) -> list[str]:
+    process = run_internal_python_command(
+        [sys.executable, "scripts/hermes-agentops", "apply", "__design_contract_probe__"],
+        root,
+    )
+    if process.returncode == 0:
+        return [f"{record_path}: hermes-agentops apply unexpectedly returned success"]
+    output = (process.stdout + process.stderr).lower()
+    if "not implemented" not in output and "intentionally" not in output and "disabled" not in output:
+        return [f"{record_path}: hermes-agentops apply failed without an explicit disabled/not-implemented message"]
+    return []
+
+
+def validate_record(root: Path, record: Any, record_path: Path, validator: jsonschema.Draft202012Validator) -> list[str]:
+    errors = schema_error_messages(record, validator, record_path)
+    if not isinstance(record, dict):
+        return errors
+    errors.extend(validate_design_status(record, record_path))
+    errors.extend(validate_boundaries(record, record_path))
+    errors.extend(validate_design_documents(record, root, record_path))
+    errors.extend(validate_pipeline_stages(record, record_path))
+    errors.extend(validate_blockers(record, record_path))
+    errors.extend(validate_apply_still_disabled(root, record_path))
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="check-real-apply-design-contract")
+    parser.add_argument("record_paths", nargs="+")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    schema = load_json(root / "schemas" / "real-apply-design-contract.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    all_errors: list[str] = []
+    for value in args.record_paths:
+        path = Path(value)
+        if not path.is_absolute():
+            path = root / path
+        try:
+            record = load_yaml(path)
+        except Exception as exc:  # pragma: no cover - defensive CLI path
+            all_errors.append(f"{path}: {exc}")
+            continue
+        all_errors.extend(validate_record(root, record, path, validator))
+    if all_errors:
+        for error in all_errors:
+            print(error)
+        return 1
+    print("real apply design contracts valid")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

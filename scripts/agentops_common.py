@@ -15,8 +15,10 @@ import io
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -113,6 +115,8 @@ def run_python_script_main(
     script: Path,
     argv: list[str],
     cwd: Path | None = None,
+    *,
+    timeout: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a Python script's main(argv) in-process with captured output.
 
@@ -133,7 +137,21 @@ def run_python_script_main(
     stdout = io.StringIO()
     stderr = io.StringIO()
     code: Any = 0
+    actual_timeout = DEFAULT_COMMAND_TIMEOUT_SECONDS if timeout is None else timeout
+    old_handler: Any = None
+    old_timer: tuple[float, float] | None = None
+
+    class _InProcessTimeout(Exception):
+        pass
+
+    def _timeout_handler(_signum: int, _frame: Any) -> None:
+        raise _InProcessTimeout(f"in-process script timed out after {actual_timeout}s: {' '.join(command)}")
+
     try:
+        if threading.current_thread() is threading.main_thread() and actual_timeout > 0:
+            old_handler = signal.getsignal(signal.SIGALRM)
+            old_timer = signal.setitimer(signal.ITIMER_REAL, actual_timeout)
+            signal.signal(signal.SIGALRM, _timeout_handler)
         sys.dont_write_bytecode = True
         if cwd is not None:
             os.chdir(cwd)
@@ -155,10 +173,19 @@ def run_python_script_main(
                 code = module.main(list(argv))
             except SystemExit as exc:
                 code = exc.code
+    except _InProcessTimeout as exc:
+        print(f"error: {exc}", file=stderr)
+        code = TIMEOUT_EXIT_CODE
     except Exception as exc:
         print(f"error: {exc}", file=stderr)
         code = 1
     finally:
+        if old_timer is not None:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, old_handler)
+            remaining, interval = old_timer
+            if remaining > 0:
+                signal.setitimer(signal.ITIMER_REAL, remaining, interval)
         sys.dont_write_bytecode = old_dont_write_bytecode
         if common_was_present:
             sys.modules["agentops_common"] = saved_common  # type: ignore[assignment]

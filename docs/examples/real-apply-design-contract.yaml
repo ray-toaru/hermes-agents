@@ -1,0 +1,129 @@
+schema_version: 1
+real_apply_design_contract_id: 20260606T000000Z_agentops_real_apply_design_contract
+generated_at: "2026-06-06T00:00:00Z"
+generated_by: real-apply-design-v2.8
+repository: ray-toaru/hermes-agents
+default_branch: main
+design_status:
+  design_only: true
+  ready_to_implement_real_apply: false
+  ready_to_enable_real_apply: false
+  apply_must_remain_disabled: true
+  mutation_code_added: false
+  feature_flag_allowed: false
+design_documents:
+  pipeline_design:
+    path: docs/REAL_APPLY_PIPELINE_DESIGN.md
+    purpose: Ordered production pipeline design and implementation-slice boundaries.
+    required_phrases:
+      - "Status: **design-only**"
+      - "`hermes-agentops apply` must remain disabled"
+      - "This document is evidence for architecture only"
+  threat_model:
+    path: docs/REAL_APPLY_THREAT_MODEL.md
+    purpose: Production real apply attacker model and required mitigations.
+    required_phrases:
+      - "Status: **design-only**"
+      - "Fail-closed means"
+      - "Design/authorization confusion"
+  recovery_runbook:
+    path: docs/REAL_APPLY_RECOVERY_RUNBOOK.md
+    purpose: Conservative production recovery rules for lock preservation, rollback preconditions, and manual review.
+    required_phrases:
+      - "Status: **design-only**"
+      - "unknown state preserves locks"
+      - "This runbook is not an implementation"
+pipeline_stages:
+  - stage: input_selection
+    order: 1
+    required_evidence: Verified change proposal and reviewed diff hash.
+    failure_mode: fail_closed_no_mutation
+  - stage: authenticated_approval_gate
+    order: 2
+    required_evidence: Authenticated approval evidence bound to repository, branch, change, agent, approver, decision, and diff hash.
+    failure_mode: fail_closed_no_mutation
+  - stage: readiness_gate
+    order: 3
+    required_evidence: Apply-readiness report with required non-blocking pre-apply gates and safe evidence paths.
+    failure_mode: fail_closed_no_mutation
+  - stage: production_lock_acquisition
+    order: 4
+    required_evidence: Production lock bound to repository, branch, change, agent, operator, head, TTL, and recovery owner.
+    failure_mode: lock_preserved_manual_review
+  - stage: rollback_point_creation
+    order: 5
+    required_evidence: Rollback point bound to pre-apply head, clean worktree, target profile hash, changed paths, and lock hash.
+    failure_mode: lock_preserved_manual_review
+  - stage: pre_mutation_audit_start
+    order: 6
+    required_evidence: Production audit-start record before any mutation.
+    failure_mode: lock_preserved_manual_review
+  - stage: mutation_command_dispatch
+    order: 7
+    required_evidence: Allowlisted argv-only timeout-bound command applying only the reviewed diff inside profile scope.
+    failure_mode: recovery_required_lock_preserved
+  - stage: post_apply_validation
+    order: 8
+    required_evidence: Post-mutation validation outputs before lock release.
+    failure_mode: recovery_required_lock_preserved
+  - stage: production_audit_completion
+    order: 9
+    required_evidence: Production completion audit for success or failure outcome.
+    failure_mode: recovery_required_lock_preserved
+  - stage: lock_release_or_preservation
+    order: 10
+    required_evidence: Lock release evidence only after successful validation and audit, otherwise recovery-required lock preservation.
+    failure_mode: recovery_required_lock_preserved
+implementation_slices_required_before_enablement:
+  - production lock lifecycle integration
+  - rollback execution and post-rollback validation
+  - production audit capture for success and failure
+  - production post-apply validation execution
+  - production recovery state machine
+  - disabled real apply skeleton wired to gates but still returning failure
+  - canary-only real apply
+  - non-default explicit real apply after canary evidence
+production_blockers:
+  - blocker: production lock lifecycle is not integrated
+    blocks: [real_apply_implementation, real_apply_enablement]
+    required_before_implementation: Implement acquisition, release, stale, recovery-required, owner, TTL, and audit binding.
+  - blocker: rollback execution is not implemented
+    blocks: [real_apply_implementation, real_apply_enablement]
+    required_before_implementation: Implement rollback command registry, precondition checks, and post-rollback validation.
+  - blocker: production audit capture is not implemented
+    blocks: [real_apply_implementation, real_apply_enablement]
+    required_before_implementation: Implement audit-start and audit-completion records for success, failure, timeout, and unknown-state outcomes.
+  - blocker: production post-apply validation is not integrated
+    blocks: [real_apply_implementation, real_apply_enablement]
+    required_before_implementation: Run allowlisted validation after mutation and before lock release.
+  - blocker: production recovery state machine is not implemented
+    blocks: [real_apply_implementation, real_apply_enablement]
+    required_before_implementation: Implement recovery-required preservation, manual review gates, rollback preconditions, and retry rules.
+attack_review:
+  - attack: Treat design documents as permission to implement real apply.
+    decision: rejected
+    stable_conclusion: The contract requires design_only true, implementation false, enablement false, and apply disabled.
+  - attack: Add a feature flag that enables mutation before prerequisites converge.
+    decision: rejected
+    stable_conclusion: The contract requires feature_flag_allowed false and mutation_code_added false.
+  - attack: Reuse sandbox audit or recovery records as production audit or recovery records.
+    decision: rejected
+    stable_conclusion: Production records require separate schemas and implementation slices; sandbox evidence cannot satisfy production gates.
+  - attack: Release a lock after validation failure to unblock future work.
+    decision: rejected
+    stable_conclusion: Validation failure or unknown state must preserve the lock and require manual review.
+  - attack: Automatically rollback on unknown state.
+    decision: rejected
+    stable_conclusion: Rollback requires proven preconditions; unknown state fails closed.
+boundaries:
+  contract_is_design_only: true
+  does_not_enable_apply: true
+  does_not_authorize_mutation: true
+  does_not_add_mutation_code: true
+  does_not_mutate_source_profiles: true
+  does_not_release_locks: true
+  does_not_execute_rollback: true
+  does_not_create_production_audit_records: true
+  does_not_read_secret_values: true
+  does_not_mutate_runtime_state: true
+  business_orchestration_not_authorized: true

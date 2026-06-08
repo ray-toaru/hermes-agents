@@ -4,14 +4,14 @@
 
 This is the project-level design entry point for Hermes AgentOps Manager. It describes the intended system as a whole, not only the current version-specific increments.
 
-As of v2.0:
+As of v2.8:
 
 - The repository is public.
 - `main` is governed by repository ruleset / PR / CI / CODEOWNERS discipline.
 - The current implemented direction is repository governance, evidence validation, and bounded governance-record generation.
 - `apply` remains disabled and must remain non-zero until a separately reviewed mutation pipeline exists.
 - Validators and generators may read repository governance records and write only explicitly documented governance records under `changes/<change_id>/`.
-- Current read-only evidence layers include rollback-point validation, audit-record validation, approval-identity evidence validation, post-apply validation evidence validation, apply-lock analysis, and apply-readiness report validation.
+- Current read-only and sandbox-only evidence layers include rollback-point validation, audit-record validation, approval-identity evidence validation, post-apply validation evidence validation, apply-lock analysis, apply-readiness report validation, signed approval verification, integrated sandbox mutation, sandbox audit capture, sandbox recovery simulation, real-apply readiness review evidence, and the v2.8 design-only real apply package.
 - No current script may read real secret values, mutate runtime state, mutate managed profiles, acquire or release real runtime locks, execute rollback, or execute business actions.
 - Future runtime-adjacent health, deployment, or repair management is allowed only after a separate design/ADR, read-only-first validation, explicit approval gates, and no Hermes runtime bypass.
 
@@ -94,6 +94,7 @@ AgentOps must not:
 | Post-apply validation schema/checker | Implemented read-only | Validates post-apply validation evidence; does not execute apply or rollback. |
 | Apply-lock analysis | Implemented read-only | Reports blocking lock evidence to stdout only; does not write reports or mutate locks. |
 | Apply-readiness report | Implemented read-only | Aggregates evidence gates; `apply_authorized` remains `false`. |
+| Real apply design package | Implemented design-only | Pipeline design, threat model, recovery runbook, schema, checker, and tests exist; no mutation code or feature flag. |
 | Runtime-adjacent health/deployment/repair management | Not implemented | Future design only; must not bypass Hermes runtime or become business orchestration. |
 | Real lock acquisition/release | Not implemented | Future mutation prerequisite. |
 | Rollback point creation | Not implemented | Future mutation prerequisite distinct from the current read-only checker. |

@@ -57,3 +57,19 @@ def test_run_internal_python_command_dispatches_existing_script_in_process(tmp_p
     assert result.returncode == 0
     assert result.stdout.strip() == "internal:one:two"
     assert result.stderr == ""
+
+
+def test_run_python_script_main_returns_timeout_failure(tmp_path: Path) -> None:
+    script = tmp_path / "slow_tool.py"
+    script.write_text(
+        "import time\n"
+        "def main(argv):\n"
+        "    time.sleep(2)\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    result = run_python_script_main(script, [], cwd=tmp_path, timeout=1)
+
+    assert result.returncode == TIMEOUT_EXIT_CODE
+    assert "in-process script timed out" in result.stderr

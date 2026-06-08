@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 from collections.abc import Iterator
 from typing import Any
@@ -22,3 +23,9 @@ def subprocess_timeout(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
     monkeypatch.setattr(subprocess, "run", run_with_timeout)
     yield
+    # Test helpers and repository-internal dispatch use SIGALRM for fail-closed
+    # in-process script timeouts. Ensure no alarm leaks across tests or into
+    # Python interpreter shutdown, where it can make single-process pytest runs
+    # nondeterministic in sandbox-heavy suites.
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    signal.signal(signal.SIGALRM, signal.SIG_DFL)

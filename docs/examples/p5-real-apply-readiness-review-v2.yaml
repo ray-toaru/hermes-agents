@@ -1,0 +1,224 @@
+schema_version: 1
+real_apply_readiness_review_id: 20260606T000000Z_agentops_real_apply_readiness_review_v2
+generated_at: "2026-06-06T00:00:00Z"
+generated_by: p5-real-apply-readiness-review-v2
+repository: ray-toaru/hermes-agents
+default_branch: main
+review_scope:
+  baseline: v2.1-v2.6 evidence chain after sandbox recovery simulation
+  included_versions:
+    - v2.1
+    - v2.2
+    - v2.3
+    - v2.4
+    - v2.5
+    - v2.6
+  reviewed_artifacts:
+    - path: docs/v2.1-maintainability-and-timeouts.md
+      purpose: shared helpers and subprocess timeout hardening
+    - path: docs/v2.2-test-harness-and-internal-dispatch.md
+      purpose: test harness stability and reviewed internal dispatch boundary
+    - path: docs/v2.3-signed-attestation-approval-verifier.md
+      purpose: read-only signed attestation approval verifier
+    - path: docs/v2.4-integrated-sandbox-mutation-pipeline.md
+      purpose: sandbox-only integrated mutation evidence pipeline
+    - path: docs/v2.5-sandbox-mutation-audit-capture.md
+      purpose: sandbox-only mutation audit capture
+    - path: docs/v2.6-sandbox-recovery-simulation.md
+      purpose: sandbox-only recovery simulation
+    - path: docs/P5_MUTATION_READINESS_REVIEW.md
+      purpose: previous P5 mutation readiness baseline and blocker list
+decision:
+  ready_to_design_real_apply: true
+  ready_to_implement_real_apply: false
+  ready_to_enable_real_apply: false
+  apply_must_remain_disabled: true
+  next_allowed_step: real_apply_design_only
+  rationale: v2.1-v2.6 provide enough read-only and sandbox evidence to design the real apply pipeline, but production lock lifecycle, rollback execution, production audit capture, production recovery, and real post-apply validation integration are still absent; therefore implementation and enablement remain blocked.
+gate_reviews:
+  - gate: authenticated_approval
+    status: read_only_implemented
+    evidence_paths:
+      - scripts/verify-authenticated-approval
+      - schemas/authenticated-approval.schema.json
+      - schemas/signed-approval-attestation.schema.json
+      - schemas/trusted-approval-signers.schema.json
+      - docs/v2.3-signed-attestation-approval-verifier.md
+    test_paths:
+      - tests/test_authenticated_approval_verifier.py
+    blocks_design: false
+    blocks_implementation: false
+    notes: Signed attestation verification is implemented as read-only evidence; live_github remains optional and fail-closed.
+  - gate: live_github_approval
+    status: not_implemented
+    evidence_paths:
+      - scripts/verify-authenticated-approval
+      - docs/v2.3-signed-attestation-approval-verifier.md
+    test_paths:
+      - tests/test_authenticated_approval_verifier.py
+    blocks_design: false
+    blocks_implementation: false
+    notes: Direct GitHub review verification is not implemented; signed attestations cover the current authenticated approval path, while live_github can be designed separately before production use if required.
+  - gate: structured_command_evidence
+    status: read_only_implemented
+    evidence_paths:
+      - scripts/check-structured-command
+      - scripts/run-structured-command-sandbox
+      - schemas/structured-command.schema.json
+      - schemas/structured-command-run.schema.json
+    test_paths:
+      - tests/test_structured_command_validator.py
+      - tests/test_structured_command_sandbox_runner.py
+    blocks_design: false
+    blocks_implementation: false
+    notes: Structured command records and validation-only sandbox execution exist; mutation command dispatch remains intentionally absent.
+  - gate: integrated_sandbox_pipeline
+    status: sandbox_only_implemented
+    evidence_paths:
+      - scripts/run-integrated-sandbox-mutation
+      - schemas/integrated-sandbox-mutation-run.schema.json
+      - docs/v2.4-integrated-sandbox-mutation-pipeline.md
+    test_paths:
+      - tests/test_integrated_sandbox_mutation.py
+    blocks_design: false
+    blocks_implementation: false
+    notes: The pipeline composes authenticated approval, readiness, temporary lock, rollback point, and post-apply validation in a temporary workspace only.
+  - gate: sandbox_audit_capture
+    status: sandbox_only_implemented
+    evidence_paths:
+      - scripts/generate-sandbox-mutation-audit
+      - scripts/check-sandbox-mutation-audit
+      - schemas/sandbox-mutation-audit-record.schema.json
+      - docs/v2.5-sandbox-mutation-audit-capture.md
+    test_paths:
+      - tests/test_sandbox_mutation_audit.py
+    blocks_design: false
+    blocks_implementation: false
+    notes: Sandbox audit captures success/failure evidence but does not create production audit records.
+  - gate: sandbox_recovery_simulation
+    status: sandbox_only_implemented
+    evidence_paths:
+      - scripts/simulate-sandbox-recovery
+      - scripts/check-sandbox-recovery-simulation
+      - schemas/sandbox-recovery-simulation.schema.json
+      - docs/v2.6-sandbox-recovery-simulation.md
+    test_paths:
+      - tests/test_sandbox_recovery_simulation.py
+    blocks_design: false
+    blocks_implementation: false
+    notes: Recovery simulation records fail-closed decisions and unknown-state behavior without releasing locks or executing rollback.
+  - gate: real_lock_lifecycle
+    status: prototype_only
+    evidence_paths:
+      - scripts/real-apply-lock-prototype
+      - schemas/real-apply-lock.schema.json
+    test_paths:
+      - tests/test_real_apply_lock_prototype.py
+    blocks_design: false
+    blocks_implementation: true
+    notes: Temporary-repository lock prototype exists, but no production apply pipeline owns lock acquisition, release, preservation, or recovery-required transitions.
+  - gate: rollback_execution
+    status: prototype_only
+    evidence_paths:
+      - scripts/create-rollback-point-prototype
+      - schemas/rollback-point-created.schema.json
+    test_paths:
+      - tests/test_rollback_point_creator_prototype.py
+    blocks_design: false
+    blocks_implementation: true
+    notes: Rollback point creation exists in temporary repositories; rollback execution and post-rollback validation remain unimplemented.
+  - gate: post_apply_validation_execution
+    status: sandbox_only_implemented
+    evidence_paths:
+      - scripts/run-post-apply-validation-sandbox
+      - schemas/post-apply-validation-run.schema.json
+    test_paths:
+      - tests/test_post_apply_validation_sandbox_runner.py
+    blocks_design: false
+    blocks_implementation: true
+    notes: Post-apply validation runs only after sandbox mutation; production mutation integration and lock-release gating remain absent.
+  - gate: production_audit_capture
+    status: not_implemented
+    evidence_paths:
+      - schemas/audit-record.schema.json
+      - scripts/check-audit-record
+      - scripts/generate-sandbox-mutation-audit
+    test_paths:
+      - tests/test_audit_record_validator.py
+      - tests/test_sandbox_mutation_audit.py
+    blocks_design: false
+    blocks_implementation: true
+    notes: Existing production audit schema is validation-only; sandbox audit is deliberately not production audit.
+  - gate: production_recovery
+    status: not_implemented
+    evidence_paths:
+      - scripts/simulate-sandbox-recovery
+      - schemas/sandbox-recovery-simulation.schema.json
+    test_paths:
+      - tests/test_sandbox_recovery_simulation.py
+    blocks_design: false
+    blocks_implementation: true
+    notes: Recovery simulation exists; production rollback execution, lock preservation/release integration, and retry rules remain unimplemented.
+  - gate: test_stability
+    status: partially_implemented
+    evidence_paths:
+      - tests/conftest.py
+      - tests/agentops_test_utils.py
+      - docs/v2.2-test-harness-and-internal-dispatch.md
+    test_paths:
+      - tests/test_agentops_common.py
+    blocks_design: false
+    blocks_implementation: true
+    notes: Split test runs cover the full suite in the current tool environment; a single-process full pytest timeout still requires separate investigation before implementation or enablement.
+blocking_gaps:
+  - gap: production real lock lifecycle is not integrated with apply
+    blocks:
+      - real_apply_implementation
+      - real_apply_enablement
+    required_evidence_before_implementation: Real apply design must define lock acquisition, release, stale handling, recovery_required handling, and preservation on uncertainty before any mutation command exists.
+  - gap: rollback execution and post-rollback validation are absent
+    blocks:
+      - real_apply_implementation
+      - real_apply_enablement
+    required_evidence_before_implementation: Real apply design must specify rollback command boundaries, rollback preconditions, validation after rollback, and audit output for rollback success or failure.
+  - gap: production mutation audit capture is absent
+    blocks:
+      - real_apply_implementation
+      - real_apply_enablement
+    required_evidence_before_implementation: Real apply design must require success and failure audit records bound to approval, readiness, lock, rollback, mutation, validation, and recovery evidence.
+  - gap: production recovery rules are absent
+    blocks:
+      - real_apply_implementation
+      - real_apply_enablement
+    required_evidence_before_implementation: Real apply design must define fail-closed recovery transitions for unknown state, validation failure, timeout, partial write, audit failure, and retry.
+  - gap: single-process full pytest timeout remains unresolved in the current interactive environment
+    blocks:
+      - real_apply_implementation
+    required_evidence_before_implementation: Before implementation, grouped CI must be green and preserve fail-closed subprocess and in-process script timeouts.
+attack_review:
+  - attack: Treat design readiness as permission to implement apply.
+    decision: rejected
+    stable_conclusion: Design readiness only permits documentation and disabled skeleton review; implementation and enablement remain blocked by production lifecycle gaps.
+  - attack: Treat sandbox audit and recovery as production audit and recovery.
+    decision: rejected
+    stable_conclusion: Sandbox records require sandbox-only, non-production, non-authorizing flags and cannot be reused as production evidence.
+  - attack: Treat temporary lock and rollback prototypes as production lifecycle controls.
+    decision: rejected
+    stable_conclusion: Prototype evidence proves sequencing only; production mutation needs integrated lock ownership and rollback execution semantics.
+  - attack: Treat signed attestation as sufficient for all approval contexts.
+    decision: rejected
+    stable_conclusion: Signed attestation is a valid read-only authentication path, but live GitHub verification remains separate if direct GitHub review provenance is required.
+  - attack: Ignore unresolved single-process full pytest timeout because split tests pass.
+    decision: rejected
+    stable_conclusion: Grouped split tests are the accepted coverage strategy for this sandbox-heavy suite; implementation or enablement must still require green grouped CI and preserved fail-closed timeouts.
+boundaries:
+  review_is_evidence_only: true
+  does_not_enable_apply: true
+  does_not_authorize_mutation: true
+  does_not_mutate_source_profiles: true
+  does_not_release_locks: true
+  does_not_execute_rollback: true
+  does_not_create_production_audit_records: true
+  does_not_read_secret_values: true
+  does_not_mutate_runtime_state: true
+  business_orchestration_not_authorized: true

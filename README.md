@@ -16,6 +16,7 @@ New development agents should read these project-level design documents before c
 - `docs/SAFETY_INVARIANTS.md` — non-negotiable safety rules.
 - `docs/THREAT_MODEL.md` — attacker model and mitigations.
 - `docs/APPLY_PIPELINE_DESIGN.md` — complete future apply pipeline, including which phases are implemented, read-only, design-only, or blocked.
+- `docs/REAL_APPLY_PIPELINE_DESIGN.md`, `docs/REAL_APPLY_THREAT_MODEL.md`, and `docs/REAL_APPLY_RECOVERY_RUNBOOK.md` — v2.8 design-only real apply package; these do not enable apply.
 - `docs/OPERATIONS_AND_RECOVERY.md` — CI, ruleset, stale PR, stale lock, and future recovery handling.
 
 Architecture decisions that should not be repeatedly reopened are recorded under `docs/adr/`.
