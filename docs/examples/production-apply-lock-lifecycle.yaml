@@ -1,0 +1,181 @@
+schema_version: 1
+contract_id: production_apply_lock_lifecycle/v1
+generated_at: "2026-06-08T00:00:00Z"
+generated_by: v2.9-production-lock-lifecycle
+status: design_prototype_only
+design_only: true
+mutation_enabled: false
+apply_authorized: false
+lock_release_implemented: false
+lifecycle_states:
+  - state: not_acquired
+    order: 1
+    terminal: false
+    allows_release: false
+    manual_review_required: false
+    note: No production lock exists yet.
+  - state: acquired
+    order: 2
+    terminal: false
+    allows_release: false
+    manual_review_required: false
+    note: Lock exists and is bound to the selected change and head.
+  - state: rollback_bound
+    order: 3
+    terminal: false
+    allows_release: false
+    manual_review_required: false
+    note: Rollback point evidence has been created and bound to the lock.
+  - state: audit_started
+    order: 4
+    terminal: false
+    allows_release: false
+    manual_review_required: false
+    note: Production audit-start evidence exists before mutation.
+  - state: mutation_attempted
+    order: 5
+    terminal: false
+    allows_release: false
+    manual_review_required: false
+    note: Future mutation command has attempted the reviewed diff.
+  - state: post_validated
+    order: 6
+    terminal: false
+    allows_release: false
+    manual_review_required: false
+    note: Post-apply validation succeeded after mutation.
+  - state: audit_completed
+    order: 7
+    terminal: false
+    allows_release: false
+    manual_review_required: false
+    note: Completion audit exists for the final outcome.
+  - state: release_eligible
+    order: 8
+    terminal: false
+    allows_release: true
+    manual_review_required: false
+    note: Every release prerequisite is present and non-recovery.
+  - state: released
+    order: 9
+    terminal: true
+    allows_release: false
+    manual_review_required: false
+    note: Future release has already occurred and must be audited.
+  - state: recovery_required
+    order: 10
+    terminal: true
+    allows_release: false
+    manual_review_required: true
+    note: Failure, timeout, audit failure, or unknown state requires preservation and review.
+  - state: preserved_for_review
+    order: 11
+    terminal: true
+    allows_release: false
+    manual_review_required: true
+    note: Lock remains preserved until a reviewed recovery process resolves it.
+allowed_transitions:
+  - from: not_acquired
+    to: acquired
+    requires:
+      - authenticated approval evidence
+      - readiness evidence
+      - no blocking lock analysis
+  - from: acquired
+    to: rollback_bound
+    requires:
+      - production lock evidence hash
+      - clean pre-mutation head
+      - rollback point evidence
+  - from: rollback_bound
+    to: audit_started
+    requires:
+      - rollback point evidence hash
+      - audit-start record
+  - from: audit_started
+    to: mutation_attempted
+    requires:
+      - audit-start evidence hash
+      - reviewed structured mutation command
+  - from: mutation_attempted
+    to: post_validated
+    requires:
+      - post-apply validation success
+      - source profile hash after mutation
+  - from: post_validated
+    to: audit_completed
+    requires:
+      - successful mutation evidence
+      - successful post-apply validation evidence
+      - production audit completion record
+  - from: audit_completed
+    to: release_eligible
+    requires:
+      - recovery_not_required
+      - completion audit hash
+  - from: release_eligible
+    to: released
+    requires:
+      - explicit release operation evidence
+      - release audit evidence
+  - from: acquired
+    to: recovery_required
+    requires:
+      - any failed rollback point, audit-start, timeout, or unknown state
+  - from: mutation_attempted
+    to: recovery_required
+    requires:
+      - mutation failure, validation failure, audit failure, timeout, or unknown state
+  - from: recovery_required
+    to: preserved_for_review
+    requires:
+      - manual review required
+      - retry blocked without review
+release_rules:
+  release_allowed_only_from:
+    - release_eligible
+  requires_successful_mutation: true
+  requires_post_apply_validation_success: true
+  requires_production_audit_completion: true
+  requires_recovery_not_required: true
+  automatic_release_on_unknown_state: false
+preservation_rules:
+  preserve_on_failure: true
+  preserve_on_unknown_state: true
+  preserve_on_audit_failure: true
+  manual_review_before_retry: true
+required_evidence_bindings:
+  - authenticated approval evidence
+  - readiness report
+  - production lock evidence
+  - rollback point evidence
+  - audit-start evidence
+  - structured mutation command evidence
+  - post-apply validation evidence
+  - production completion audit evidence
+  - recovery decision evidence
+production_blockers:
+  - blocker: production lock release is not implemented
+    blocks: [real_apply_implementation, real_apply_enablement, lock_release_execution]
+  - blocker: production audit capture is not implemented
+    blocks: [real_apply_implementation, real_apply_enablement, lock_release_execution]
+  - blocker: rollback execution and validation are not implemented
+    blocks: [real_apply_implementation, real_apply_enablement]
+  - blocker: production recovery state machine is not implemented
+    blocks: [real_apply_implementation, real_apply_enablement, lock_release_execution]
+design_documents:
+  lock_lifecycle_design:
+    path: docs/PRODUCTION_LOCK_LIFECYCLE_DESIGN.md
+    required_phrases:
+      - "Status: **design/prototype-only**"
+      - "does not release production locks"
+      - "unknown state preserves the lock"
+boundaries:
+  does_not_enable_apply: true
+  does_not_release_production_locks: true
+  does_not_mutate_profiles: true
+  does_not_execute_rollback: true
+  does_not_create_production_audit_records: true
+  does_not_read_secret_values: true
+  does_not_mutate_runtime_state: true
+  business_orchestration_not_authorized: true

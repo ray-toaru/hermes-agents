@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+"""Validate production apply lock lifecycle design/prototype contracts."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+
+from agentops_common import (
+    is_safe_relative_path,
+    load_json,
+    load_yaml,
+    run_internal_python_command,
+    schema_error_messages,
+)
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+REQUIRED_STATES = [
+    "not_acquired",
+    "acquired",
+    "rollback_bound",
+    "audit_started",
+    "mutation_attempted",
+    "post_validated",
+    "audit_completed",
+    "release_eligible",
+    "released",
+    "recovery_required",
+    "preserved_for_review",
+]
+REQUIRED_BINDINGS = {
+    "authenticated approval evidence",
+    "readiness report",
+    "production lock evidence",
+    "rollback point evidence",
+    "audit-start evidence",
+    "structured mutation command evidence",
+    "post-apply validation evidence",
+    "production completion audit evidence",
+    "recovery decision evidence",
+}
+REQUIRED_BLOCKERS = {
+    "production lock release is not implemented",
+    "production audit capture is not implemented",
+    "rollback execution and validation are not implemented",
+    "production recovery state machine is not implemented",
+}
+
+
+def resolve_path(root: Path, value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else root / path
+
+
+def validate_contract_flags(record: dict[str, Any], record_path: Path) -> list[str]:
+    errors: list[str] = []
+    required = {
+        "design_only": True,
+        "mutation_enabled": False,
+        "apply_authorized": False,
+        "lock_release_implemented": False,
+    }
+    for key, expected in required.items():
+        if record.get(key) is not expected:
+            errors.append(f"{record_path}: {key} must be {expected!r}")
+    if record.get("status") != "design_prototype_only":
+        errors.append(f"{record_path}: status must be design_prototype_only")
+    return errors
+
+
+def validate_boundaries(record: dict[str, Any], record_path: Path) -> list[str]:
+    errors: list[str] = []
+    for key, value in (record.get("boundaries") or {}).items():
+        if value is not True:
+            errors.append(f"{record_path}: boundary {key} must be true")
+    return errors
+
+
+def validate_design_documents(record: dict[str, Any], root: Path, record_path: Path) -> list[str]:
+    errors: list[str] = []
+    docs = record.get("design_documents") or {}
+    for name, doc in docs.items():
+        if not isinstance(doc, dict):
+            continue
+        value = doc.get("path")
+        if not isinstance(value, str) or not is_safe_relative_path(value):
+            errors.append(f"{record_path}: design_documents.{name}.path is unsafe: {value!r}")
+            continue
+        path = resolve_path(root, value)
+        if not path.exists():
+            errors.append(f"{record_path}: design document does not exist: {value}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        for phrase in doc.get("required_phrases") or []:
+            if phrase not in text:
+                errors.append(f"{record_path}: {value} missing required phrase: {phrase!r}")
+    return errors
+
+
+def validate_lifecycle_states(record: dict[str, Any], record_path: Path) -> list[str]:
+    errors: list[str] = []
+    states = record.get("lifecycle_states") or []
+    state_to_item: dict[str, dict[str, Any]] = {}
+    for item in states:
+        if isinstance(item, dict) and isinstance(item.get("state"), str):
+            state = item["state"]
+            if state in state_to_item:
+                errors.append(f"{record_path}: duplicate lifecycle state: {state}")
+            state_to_item[state] = item
+    missing = [state for state in REQUIRED_STATES if state not in state_to_item]
+    if missing:
+        errors.append(f"{record_path}: missing lifecycle states: {missing}")
+    for index, state in enumerate(REQUIRED_STATES, start=1):
+        item = state_to_item.get(state) or {}
+        if item.get("order") != index:
+            errors.append(f"{record_path}: lifecycle state {state} must have order {index}")
+    for state, item in state_to_item.items():
+        if item.get("allows_release") is True and state != "release_eligible":
+            errors.append(f"{record_path}: only release_eligible may allow release, got {state}")
+        if state in {"recovery_required", "preserved_for_review"}:
+            if item.get("manual_review_required") is not True:
+                errors.append(f"{record_path}: {state} must require manual review")
+            if item.get("allows_release") is not False:
+                errors.append(f"{record_path}: {state} must not allow release")
+    return errors
+
+
+def validate_transitions(record: dict[str, Any], record_path: Path) -> list[str]:
+    errors: list[str] = []
+    states = {item.get("state") for item in record.get("lifecycle_states") or [] if isinstance(item, dict)}
+    transition_pairs = set()
+    for item in record.get("allowed_transitions") or []:
+        if not isinstance(item, dict):
+            continue
+        start = item.get("from")
+        end = item.get("to")
+        if start not in states or end not in states:
+            errors.append(f"{record_path}: transition references unknown state: {start!r}->{end!r}")
+        if end == "released" and start != "release_eligible":
+            errors.append(f"{record_path}: forbidden transition into released from {start!r}; only release_eligible may release")
+        if start == "recovery_required" and end != "preserved_for_review":
+            errors.append(f"{record_path}: recovery_required may only transition to preserved_for_review, not {end!r}")
+        if start == "preserved_for_review":
+            errors.append(f"{record_path}: preserved_for_review is terminal and must not transition to {end!r}")
+        transition_pairs.add((start, end))
+    required_pairs = {
+        ("not_acquired", "acquired"),
+        ("acquired", "rollback_bound"),
+        ("rollback_bound", "audit_started"),
+        ("audit_started", "mutation_attempted"),
+        ("mutation_attempted", "post_validated"),
+        ("post_validated", "audit_completed"),
+        ("audit_completed", "release_eligible"),
+        ("release_eligible", "released"),
+        ("mutation_attempted", "recovery_required"),
+        ("recovery_required", "preserved_for_review"),
+    }
+    missing_pairs = sorted(required_pairs - transition_pairs)
+    if missing_pairs:
+        errors.append(f"{record_path}: missing required transitions: {missing_pairs}")
+    return errors
+
+
+def validate_release_and_preservation_rules(record: dict[str, Any], record_path: Path) -> list[str]:
+    errors: list[str] = []
+    release = record.get("release_rules") or {}
+    if release.get("release_allowed_only_from") != ["release_eligible"]:
+        errors.append(f"{record_path}: release_allowed_only_from must be exactly ['release_eligible']")
+    for key in (
+        "requires_successful_mutation",
+        "requires_post_apply_validation_success",
+        "requires_production_audit_completion",
+        "requires_recovery_not_required",
+    ):
+        if release.get(key) is not True:
+            errors.append(f"{record_path}: release_rules.{key} must be true")
+    if release.get("automatic_release_on_unknown_state") is not False:
+        errors.append(f"{record_path}: automatic_release_on_unknown_state must be false")
+    preservation = record.get("preservation_rules") or {}
+    for key in ("preserve_on_failure", "preserve_on_unknown_state", "preserve_on_audit_failure", "manual_review_before_retry"):
+        if preservation.get(key) is not True:
+            errors.append(f"{record_path}: preservation_rules.{key} must be true")
+    return errors
+
+
+def validate_bindings_and_blockers(record: dict[str, Any], record_path: Path) -> list[str]:
+    errors: list[str] = []
+    bindings = set(record.get("required_evidence_bindings") or [])
+    missing_bindings = sorted(REQUIRED_BINDINGS - bindings)
+    if missing_bindings:
+        errors.append(f"{record_path}: missing required evidence bindings: {missing_bindings}")
+    blockers = record.get("production_blockers") or []
+    seen = {item.get("blocker") for item in blockers if isinstance(item, dict)}
+    missing_blockers = sorted(REQUIRED_BLOCKERS - seen)
+    if missing_blockers:
+        errors.append(f"{record_path}: missing production blockers: {missing_blockers}")
+    for item in blockers:
+        if not isinstance(item, dict):
+            continue
+        blocks = set(item.get("blocks") or [])
+        if "real_apply_enablement" not in blocks:
+            errors.append(f"{record_path}: blocker {item.get('blocker')!r} must block real_apply_enablement")
+        if item.get("blocker") in {
+            "production lock release is not implemented",
+            "production audit capture is not implemented",
+            "production recovery state machine is not implemented",
+        } and "lock_release_execution" not in blocks:
+            errors.append(f"{record_path}: blocker {item.get('blocker')!r} must block lock_release_execution")
+    return errors
+
+
+def validate_apply_still_disabled(root: Path, record_path: Path) -> list[str]:
+    process = run_internal_python_command(
+        [sys.executable, "scripts/hermes-agentops", "apply", "__production_lock_probe__"],
+        root,
+    )
+    if process.returncode == 0:
+        return [f"{record_path}: hermes-agentops apply unexpectedly returned success"]
+    output = (process.stdout + process.stderr).lower()
+    if "not implemented" not in output and "intentionally" not in output and "disabled" not in output:
+        return [f"{record_path}: hermes-agentops apply failed without an explicit disabled/not-implemented message"]
+    return []
+
+
+def validate_record(root: Path, record: Any, record_path: Path, validator: jsonschema.Draft202012Validator) -> list[str]:
+    errors = schema_error_messages(record, validator, record_path)
+    if not isinstance(record, dict):
+        return errors
+    errors.extend(validate_contract_flags(record, record_path))
+    errors.extend(validate_boundaries(record, record_path))
+    errors.extend(validate_design_documents(record, root, record_path))
+    errors.extend(validate_lifecycle_states(record, record_path))
+    errors.extend(validate_transitions(record, record_path))
+    errors.extend(validate_release_and_preservation_rules(record, record_path))
+    errors.extend(validate_bindings_and_blockers(record, record_path))
+    errors.extend(validate_apply_still_disabled(root, record_path))
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="check-production-apply-lock-lifecycle")
+    parser.add_argument("record_paths", nargs="+")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    schema = load_json(root / "schemas" / "production-apply-lock-lifecycle.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    all_errors: list[str] = []
+    for value in args.record_paths:
+        path = Path(value)
+        if not path.is_absolute():
+            path = root / path
+        try:
+            record = load_yaml(path)
+        except Exception as exc:  # pragma: no cover - defensive CLI path
+            all_errors.append(f"{path}: {exc}")
+            continue
+        all_errors.extend(validate_record(root, record, path, validator))
+    if all_errors:
+        for error in all_errors:
+            print(error)
+        return 1
+    print("production apply lock lifecycle contracts valid")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
