@@ -127,12 +127,14 @@ def run_python_script_main(
     script_dir = resolved.parent
     old_cwd = Path.cwd()
     old_sys_path = list(sys.path)
+    old_dont_write_bytecode = sys.dont_write_bytecode
     saved_common = sys.modules.get("agentops_common")
     common_was_present = "agentops_common" in sys.modules
     stdout = io.StringIO()
     stderr = io.StringIO()
     code: Any = 0
     try:
+        sys.dont_write_bytecode = True
         if cwd is not None:
             os.chdir(cwd)
         if str(script_dir) not in sys.path:
@@ -157,6 +159,7 @@ def run_python_script_main(
         print(f"error: {exc}", file=stderr)
         code = 1
     finally:
+        sys.dont_write_bytecode = old_dont_write_bytecode
         if common_was_present:
             sys.modules["agentops_common"] = saved_common  # type: ignore[assignment]
         else:

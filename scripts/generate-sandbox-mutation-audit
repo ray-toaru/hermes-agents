@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""Generate read-only sandbox mutation audit evidence.
+
+This command consumes an integrated sandbox mutation run evidence document and
+emits an audit record for that sandbox run. It does not write production audit
+records, authorize apply, mutate source profiles, release locks, execute
+rollback, read secrets, mutate runtime state, or orchestrate business work.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+from agentops_common import (
+    load_json,
+    load_yaml,
+    run_command,
+    schema_error_messages,
+    sha256_file,
+    sha256_text,
+    utc_now_compact,
+    utc_now_iso,
+)
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_evidence(path: Path) -> dict[str, Any]:
+    data = load_yaml(path)
+    if not isinstance(data, dict):
+        raise RuntimeError("integrated sandbox evidence must be a mapping")
+    return data
+
+
+def git_head(root: Path) -> str | None:
+    process = run_command(["git", "rev-parse", "HEAD"], root)
+    if process.returncode != 0:
+        return None
+    value = process.stdout.strip()
+    return value if value else None
+
+
+def canonical_yaml(data: Any) -> str:
+    return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
+
+
+def artifact_sha(report: dict[str, Any], name: str) -> str | None:
+    artifact = (report.get("artifacts") or {}).get(name)
+    if not isinstance(artifact, dict):
+        return None
+    value = artifact.get("sha256")
+    return value if isinstance(value, str) else None
+
+
+def step_summary(report: dict[str, Any]) -> list[dict[str, Any]]:
+    summary: list[dict[str, Any]] = []
+    for step in report.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        summary.append(
+            {
+                "name": step.get("name"),
+                "status": step.get("status"),
+                "exit_code": step.get("exit_code"),
+                "stdout_sha256": step.get("stdout_sha256"),
+                "stderr_sha256": step.get("stderr_sha256"),
+            }
+        )
+    return summary
+
+
+def boundaries() -> dict[str, bool]:
+    return {
+        "audit_is_read_only": True,
+        "sandbox_audit_only": True,
+        "does_not_authorize_apply": True,
+        "does_not_mutate_source_profiles": True,
+        "does_not_acquire_or_release_locks": True,
+        "does_not_execute_rollback": True,
+        "does_not_read_secret_values": True,
+        "does_not_mutate_runtime_state": True,
+        "business_orchestration_not_authorized": True,
+    }
+
+
+def failure_recovery() -> dict[str, Any]:
+    return {
+        "manual_review_required": True,
+        "rollback_not_executed_by_audit": True,
+        "lock_release_not_performed_by_audit": True,
+        "note": "Sandbox mutation audit evidence records the integrated sandbox outcome only. It never releases locks, executes rollback, authorizes apply, or replaces manual review after failures.",
+    }
+
+
+def build_audit(root: Path, args: argparse.Namespace) -> dict[str, Any]:
+    report_path = Path(args.integrated_run)
+    if not report_path.is_absolute():
+        report_path = root / report_path
+    report = load_evidence(report_path)
+    steps = step_summary(report)
+    if not steps:
+        raise RuntimeError("integrated sandbox run has no step evidence")
+    change_id = report.get("change_id")
+    agent = report.get("agent")
+    if not isinstance(change_id, str) or not isinstance(agent, str):
+        raise RuntimeError("integrated sandbox run must include change_id and agent")
+    parts = change_id.split("_")
+    if len(parts) != 3:
+        raise RuntimeError("change_id must have timestamp_agent_digest format")
+    source_profiles_unchanged = report.get("source_profiles_unchanged") is True
+    audited_status = report.get("status")
+    recovery_required = audited_status != "success" or report.get("failure_stage") is not None
+    head_before = git_head(root)
+    head_after = git_head(root)
+    step_summary_yaml = canonical_yaml(steps)
+    return {
+        "schema_version": 1,
+        "sandbox_audit_record_id": f"{utc_now_compact()}_{parts[1]}_{parts[2]}_sandbox_mutation_audit",
+        "integrated_sandbox_run_id": report.get("integrated_sandbox_run_id"),
+        "change_id": change_id,
+        "agent": agent,
+        "operator": report.get("operator"),
+        "repository": args.repository,
+        "default_branch": args.default_branch,
+        "generated_at": args.generated_at or utc_now_iso(),
+        "generated_by": "generate-sandbox-mutation-audit",
+        "sandbox_only": True,
+        "production_audit": False,
+        "mutation_enabled": False,
+        "apply_authorized": False,
+        "status": "success_recorded" if audited_status == "success" and source_profiles_unchanged else "failure_recorded",
+        "audited_status": audited_status,
+        "audited_failure_stage": report.get("failure_stage"),
+        "source_profiles_hash_before": report.get("source_profiles_hash_before"),
+        "source_profiles_hash_after": report.get("source_profiles_hash_after"),
+        "source_profiles_unchanged": source_profiles_unchanged,
+        "recovery_required": bool(recovery_required),
+        "manual_review_required": True,
+        "source_git": {
+            "head_before": head_before,
+            "head_after": head_after,
+            "default_branch": args.default_branch,
+        },
+        "evidence_hashes": {
+            "integrated_sandbox_run_sha256": sha256_file(report_path),
+            "authenticated_approval_sha256": artifact_sha(report, "authenticated_approval"),
+            "apply_readiness_sha256": artifact_sha(report, "apply_readiness"),
+            "real_apply_lock_sha256": artifact_sha(report, "real_apply_lock"),
+            "rollback_point_sha256": artifact_sha(report, "rollback_point"),
+            "post_apply_validation_sha256": artifact_sha(report, "post_apply_validation"),
+            "step_summary_sha256": sha256_text(step_summary_yaml),
+        },
+        "step_summary": steps,
+        "boundaries": boundaries(),
+        "failure_recovery": failure_recovery(),
+    }
+
+
+def validate_audit(root: Path, audit: dict[str, Any]) -> list[str]:
+    schema = load_json(root / "schemas" / "sandbox-mutation-audit-record.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    errors = schema_error_messages(audit, validator, Path("<generated-sandbox-mutation-audit>"))
+    if audit.get("mutation_enabled") is not False or audit.get("apply_authorized") is not False:
+        errors.append("audit must not enable mutation or authorize apply")
+    if audit.get("production_audit") is not False:
+        errors.append("sandbox audit must not be marked as production audit")
+    if audit.get("source_profiles_unchanged") is not True:
+        errors.append("sandbox audit requires source profiles unchanged evidence")
+    source_git = audit.get("source_git") or {}
+    if source_git.get("head_before") != source_git.get("head_after"):
+        errors.append("source git head changed during audit generation")
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="generate-sandbox-mutation-audit")
+    parser.add_argument("integrated_run", help="Path to integrated sandbox mutation run evidence YAML")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--repository", default="ray-toaru/hermes-agents")
+    parser.add_argument("--default-branch", default="main")
+    parser.add_argument("--generated-at")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    try:
+        audit = build_audit(root, args)
+        errors = validate_audit(root, audit)
+    except Exception as exc:
+        print(f"sandbox mutation audit generation failed: {exc}", file=sys.stderr)
+        return 2
+    if errors:
+        print(yaml.safe_dump(audit, sort_keys=False), end="")
+        for error in errors:
+            print(error, file=sys.stderr)
+        return 2
+    print(yaml.safe_dump(audit, sort_keys=False), end="")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

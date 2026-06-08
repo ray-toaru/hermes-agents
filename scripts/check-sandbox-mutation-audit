@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Validate sandbox mutation audit evidence.
+
+The checker is read-only. It validates record shape and hash binding to an
+integrated sandbox run evidence file when requested. It does not authorize apply,
+mutate profiles, release locks, execute rollback, read secrets, mutate runtime
+state, or orchestrate business work.
+"""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+from agentops_common import load_json, load_yaml, schema_error_messages, sha256_file, sha256_text, agent_from_change_id
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def canonical_yaml(data: Any) -> str:
+    return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
+
+
+def validate_record(
+    root: Path,
+    record: Any,
+    record_path: Path,
+    validator: jsonschema.Draft202012Validator,
+    *,
+    integrated_run_path: Path | None,
+) -> list[str]:
+    errors = schema_error_messages(record, validator, record_path)
+    if not isinstance(record, dict):
+        return errors
+    change_id = record.get("change_id")
+    if isinstance(change_id, str):
+        expected_agent = agent_from_change_id(change_id)
+        if expected_agent and record.get("agent") != expected_agent:
+            errors.append(f"{record_path}: agent must match the agent segment in change_id")
+    if record.get("sandbox_only") is not True or record.get("production_audit") is not False:
+        errors.append(f"{record_path}: record must be sandbox-only and non-production")
+    if record.get("mutation_enabled") is not False or record.get("apply_authorized") is not False:
+        errors.append(f"{record_path}: record must not enable mutation or authorize apply")
+    if record.get("source_profiles_unchanged") is not True:
+        errors.append(f"{record_path}: source_profiles_unchanged must be true")
+    source_git = record.get("source_git") or {}
+    if source_git.get("head_before") != source_git.get("head_after"):
+        errors.append(f"{record_path}: source_git head_before must equal head_after")
+    audited_status = record.get("audited_status")
+    expected_status = "success_recorded" if audited_status == "success" else "failure_recorded"
+    if record.get("status") != expected_status:
+        errors.append(f"{record_path}: status must be {expected_status!r} for audited_status {audited_status!r}")
+    if audited_status != "success" and record.get("recovery_required") is not True:
+        errors.append(f"{record_path}: failed sandbox run audits must require recovery/manual review")
+    steps = record.get("step_summary") or []
+    if isinstance(steps, list):
+        expected_step_hash = sha256_text(canonical_yaml(steps))
+        if (record.get("evidence_hashes") or {}).get("step_summary_sha256") != expected_step_hash:
+            errors.append(f"{record_path}: step_summary_sha256 does not match step_summary")
+    if integrated_run_path is not None:
+        path = integrated_run_path if integrated_run_path.is_absolute() else root / integrated_run_path
+        if not path.exists():
+            errors.append(f"{record_path}: integrated run evidence file is missing: {path}")
+        else:
+            expected_run_hash = sha256_file(path)
+            if (record.get("evidence_hashes") or {}).get("integrated_sandbox_run_sha256") != expected_run_hash:
+                errors.append(f"{record_path}: integrated_sandbox_run_sha256 does not match {path}")
+            run = load_yaml(path)
+            if isinstance(run, dict):
+                for field in ("integrated_sandbox_run_id", "change_id", "agent", "operator"):
+                    if record.get(field) != run.get(field):
+                        errors.append(f"{record_path}: {field} does not match integrated run evidence")
+                if record.get("audited_status") != run.get("status"):
+                    errors.append(f"{record_path}: audited_status does not match integrated run status")
+                if record.get("audited_failure_stage") != run.get("failure_stage"):
+                    errors.append(f"{record_path}: audited_failure_stage does not match integrated run failure_stage")
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="check-sandbox-mutation-audit")
+    parser.add_argument("record_paths", nargs="+")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--integrated-run")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    schema = load_json(root / "schemas" / "sandbox-mutation-audit-record.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    all_errors: list[str] = []
+    integrated_run_path = Path(args.integrated_run) if args.integrated_run else None
+    for value in args.record_paths:
+        path = Path(value)
+        if not path.is_absolute():
+            path = root / path
+        try:
+            record = load_yaml(path)
+        except Exception as exc:
+            all_errors.append(f"{path}: {exc}")
+            continue
+        all_errors.extend(validate_record(root, record, path, validator, integrated_run_path=integrated_run_path))
+    if all_errors:
+        for error in all_errors:
+            print(error)
+        return 1
+    print("sandbox mutation audit records valid")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

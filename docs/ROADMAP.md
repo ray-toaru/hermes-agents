@@ -2,7 +2,7 @@
 
 ## Current Position
 
-As of v2.3, Hermes AgentOps Manager is a repository governance and evidence-validation control plane.
+As of v2.6, Hermes AgentOps Manager is a repository governance and evidence-validation control plane with an integrated sandbox-only mutation evidence pipeline, sandbox mutation audit capture, and sandbox recovery simulation.
 
 Implemented capabilities are intentionally limited to:
 
@@ -13,7 +13,10 @@ Implemented capabilities are intentionally limited to:
 - canonical apply-lock governance-record generation;
 - read-only validators for rollback point, audit record, approval identity, post-apply validation, apply-lock analysis, and apply-readiness reports;
 - sandboxed apply dry-run that applies patches only inside temporary sandboxes and leaves source profiles unchanged;
-- read-only signed approval attestation verification for authenticated approval evidence.
+- read-only signed approval attestation verification for authenticated approval evidence;
+- integrated sandbox-only mutation pipeline that composes authenticated approval, readiness, temporary lock, rollback point, and post-apply validation evidence without source mutation;
+- sandbox mutation audit capture for integrated sandbox success/failure evidence without creating production audit records;
+- sandbox recovery simulation for success, failure, and unknown-state outcomes without releasing locks or executing rollback.
 
 `apply` remains disabled. Real locks, profile mutation, rollback execution, runtime management, secret reading, and business orchestration remain out of scope.
 
@@ -78,6 +81,24 @@ Baseline ADRs:
 - `docs/adr/0010-real-lock-and-rollback-point-before-mutation.md`;
 - `docs/adr/0011-post-apply-validation-audit-and-recovery.md`.
 
+### P3.5: Integrated sandbox mutation pipeline
+
+Status: implemented sandbox-only in v2.4. See `docs/v2.4-integrated-sandbox-mutation-pipeline.md`.
+
+The pipeline composes authenticated approval verification, readiness, temporary lock acquisition, rollback point evidence, and post-apply validation inside a temporary workspace only. Sandbox mutation audit capture was added in v2.5 and sandbox recovery simulation was added in v2.6. Real apply remains disabled.
+
+### P3.6: Sandbox mutation audit capture
+
+Status: implemented sandbox-only in v2.5. See `docs/v2.5-sandbox-mutation-audit-capture.md`.
+
+Sandbox mutation audit capture consumes integrated sandbox run evidence and emits read-only audit records for success and failure paths. It writes to stdout only, does not write production audit records, and cannot authorize apply.
+
+### P3.7: Sandbox recovery simulation
+
+Status: implemented sandbox-only in v2.6. See `docs/v2.6-sandbox-recovery-simulation.md`.
+
+Recovery simulation consumes sandbox mutation audit evidence and records fail-closed recovery decisions. It does not release locks, execute rollback, retry, authorize apply, or mutate source profiles. Unknown states fail closed.
+
 ### P4: Sandboxed apply dry-run only
 
 Status: implemented as a standalone sandbox dry-run command. It does not enable `hermes-agentops apply`.
@@ -99,3 +120,4 @@ Only after those prerequisite slices converge, consider an explicit non-default 
 - bypassing Hermes provider resolution or tool registry;
 - reading real secret values;
 - mutating runtime sessions, logs, state databases, gateway, cron, containers, or systemd without a separate runtime-adjacent design.
+

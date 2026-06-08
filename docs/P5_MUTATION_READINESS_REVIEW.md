@@ -25,7 +25,10 @@ Implemented capabilities are limited to:
 - validation-only structured command sandbox execution;
 - temporary-repository atomic real apply lock prototype;
 - temporary-repository rollback point creator prototype;
-- sandbox-only post-apply validation runner prototype.
+- sandbox-only post-apply validation runner prototype;
+- integrated sandbox-only mutation pipeline that composes authenticated approval, readiness, temporary lock, rollback point, same-sandbox patch application, and post-apply validation evidence without source profile mutation;
+- sandbox mutation audit capture that records integrated sandbox success/failure evidence without creating production audit records;
+- sandbox recovery simulation that records fail-closed recovery decisions without releasing locks or executing rollback.
 
 None of these capabilities authorize or perform real mutation.
 
@@ -33,13 +36,13 @@ None of these capabilities authorize or perform real mutation.
 
 | Prerequisite | ADR | Current State | Required Before Mutation |
 | --- | --- | --- | --- |
-| Authenticated approval verification | ADR 0008 | Approval YAML and identity evidence exist; authenticated approval evidence contract exists; fixture verifier exists; signed-attestation verifier exists for local Ed25519 evidence and reviewed public trust roots; `live_github` still fails closed. | Integrate authenticated approval evidence into the future sandbox mutation pipeline; implement `live_github` separately if direct GitHub review verification is required. |
+| Authenticated approval verification | ADR 0008 | Approval YAML and identity evidence exist; authenticated approval evidence contract exists; fixture verifier exists; signed-attestation verifier exists for local Ed25519 evidence and reviewed public trust roots; integrated sandbox pipeline consumes authenticated approval evidence; `live_github` still fails closed. | Implement `live_github` separately if direct GitHub review verification is required before real mutation. |
 | Structured command evidence and dispatch | ADR 0009 | Audit command strings are recorded-only evidence; structured command evidence contract exists; validation-only sandbox runner exists, but no mutation, rollback, or audit-capture runner exists. | Add reviewed allowlisted dispatch for mutation-adjacent classes only after lock, rollback, audit, and recovery prerequisites converge. |
 | Real repository-scoped exclusive lock | ADR 0010 | Apply-lock files are governance records only; temporary-repo atomic lock prototype exists, but it is not integrated with apply. | Integrate atomic lock acquisition/release with the future mutation pipeline, including failure preservation and recovery-required state. |
 | Rollback point creation | ADR 0010 | Rollback-point governance records can be validated; temporary-repo rollback point creator prototype exists, but it is not integrated with apply and does not execute rollback. | Integrate rollback point creation before mutation, including Git object existence, clean-state binding, and failure-safe evidence persistence. |
-| Post-apply validation execution | ADR 0011 | Post-apply validation evidence can be validated; sandbox-only post-apply validation runner prototype exists, but it is not integrated with apply and does not release locks. | Execute post-apply checks after mutation and before lock release; fail closed on any unexpected result. |
-| Mutation audit capture | ADR 0011 | Audit records are validation-only evidence. | Capture success and failure audit records with structured command evidence, heads, lock lifecycle, rollback evidence, and validation outputs. |
-| Failure recovery and retry rules | ADR 0011 | Recovery is manual and evidence-only. | Preserve locks on uncertainty, attempt rollback only when preconditions hold, validate rollback, and require manual review before retry. |
+| Post-apply validation execution | ADR 0011 | Post-apply validation evidence can be validated; the standalone sandbox-only runner exists, and the integrated sandbox pipeline performs same-sandbox patch application and validation after temporary rollback-point evidence creation, but it is not real apply and does not release locks. | Execute post-apply checks after real mutation and before real lock release; fail closed on any unexpected result. |
+| Mutation audit capture | ADR 0011 | Existing audit records are validation-only evidence; sandbox mutation audit capture now records integrated sandbox success/failure evidence and hashes, but does not create production audit records. | Capture production success and failure audit records with structured command evidence, heads, lock lifecycle, rollback evidence, validation outputs, and recovery state. |
+| Failure recovery and retry rules | ADR 0011 | Sandbox recovery simulation records no-recovery, validation-failed, lock, rollback, audit-write, and unknown-state outcomes without releasing locks or executing rollback. Production recovery remains unimplemented. | Preserve real locks on uncertainty, attempt rollback only when preconditions hold, validate rollback, and require manual review before retry. |
 
 ## Attack Review
 
@@ -71,6 +74,19 @@ Rejected. The rollback point creator only emits pre-mutation evidence bound to a
 
 Rejected. The sandbox post-apply validation runner mutates only a temporary copied workspace, emits evidence, and proves source profiles remain unchanged. It does not run after real apply, release locks, create audit records, or authorize mutation.
 
+
+### Attack: Treat integrated sandbox pipeline as real apply
+
+Rejected. The integrated pipeline intentionally copies governance inputs into a throwaway temporary workspace and proves source `profiles/` remain unchanged. Its temporary lock and rollback evidence prove sequencing only; they do not protect source mutation, release production locks, execute rollback, create production audit records, or authorize apply.
+
+### Attack: Treat sandbox mutation audit as production audit
+
+Rejected. Sandbox audit records require `sandbox_only: true`, `production_audit: false`, `mutation_enabled: false`, and `apply_authorized: false`. They record integrated sandbox evidence only and cannot replace future production audit capture.
+
+### Attack: Treat sandbox recovery simulation as rollback or lock release
+
+Rejected. Recovery simulation records require `rollback_executed: false`, `lock_release_allowed: false`, `lock_release_performed: false`, and `retry_allowed_without_manual_review: false`. Unknown states must fail closed and require manual review.
+
 ## Required Implementation Slices Before Real Mutation
 
 These should be separate reviewed PRs before any mutation command exists:
@@ -81,10 +97,10 @@ These should be separate reviewed PRs before any mutation command exists:
 4. **Atomic real lock prototype**: repository-scoped lock acquisition/release in a temporary test repository, with stale/recovery behavior; no profile mutation.
 5. **Rollback point creator**: create and validate rollback evidence in a temporary repository; no rollback execution yet.
 6. **Post-apply validation runner**: run validation commands after sandbox mutation and capture structured evidence.
-7. **Audit capture pipeline**: capture success/failure audit evidence for sandboxed mutation only.
-8. **Recovery simulation**: simulate failed sandbox mutation and rollback/recovery-required evidence.
-9. **Integrated sandbox mutation pipeline**: combine all gates in a temporary repository only.
-10. **Final non-default mutation proposal**: only after the above converge, consider a real mutation command behind explicit non-default invocation and fail-closed gates.
+7. **Audit capture pipeline**: sandbox mutation audit capture is implemented; production audit capture remains future work.
+8. **Recovery simulation**: sandbox recovery simulation is implemented; production rollback execution, post-rollback validation, and real lock release remain future work.
+9. **Integrated sandbox mutation pipeline**: implemented sandbox-only in v2.4 and extended with audit and recovery evidence in v2.5-v2.6.
+10. **Final non-default mutation proposal**: only after audit and recovery converge, consider a real mutation command behind explicit non-default invocation and fail-closed gates.
 
 ## Current P5 Status
 

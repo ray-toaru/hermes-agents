@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/sandbox-mutation-audit-record.schema.json",
+  "title": "Hermes AgentOps Sandbox Mutation Audit Record",
+  "description": "Read-only audit evidence derived from an integrated sandbox mutation run. This schema does not enable real apply, authorize mutation, mutate source profiles, release locks, execute rollback, create production audit records, read secrets, mutate runtime state, or orchestrate business work.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "sandbox_audit_record_id",
+    "integrated_sandbox_run_id",
+    "change_id",
+    "agent",
+    "operator",
+    "repository",
+    "default_branch",
+    "generated_at",
+    "generated_by",
+    "sandbox_only",
+    "production_audit",
+    "mutation_enabled",
+    "apply_authorized",
+    "status",
+    "audited_status",
+    "audited_failure_stage",
+    "source_profiles_hash_before",
+    "source_profiles_hash_after",
+    "source_profiles_unchanged",
+    "recovery_required",
+    "manual_review_required",
+    "source_git",
+    "evidence_hashes",
+    "step_summary",
+    "boundaries",
+    "failure_recovery"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "sandbox_audit_record_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_sandbox_mutation_audit$"},
+    "integrated_sandbox_run_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_integrated_sandbox_mutation_run$"},
+    "change_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}$"},
+    "agent": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "operator": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "repository": {"type": "string", "minLength": 1},
+    "default_branch": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "generated_by": {"type": "string", "const": "generate-sandbox-mutation-audit"},
+    "sandbox_only": {"type": "boolean", "const": true},
+    "production_audit": {"type": "boolean", "const": false},
+    "mutation_enabled": {"type": "boolean", "const": false},
+    "apply_authorized": {"type": "boolean", "const": false},
+    "status": {"type": "string", "enum": ["success_recorded", "failure_recorded"]},
+    "audited_status": {"type": "string", "enum": ["success", "failed_closed"]},
+    "audited_failure_stage": {"type": ["string", "null"]},
+    "source_profiles_hash_before": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source_profiles_hash_after": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source_profiles_unchanged": {"type": "boolean", "const": true},
+    "recovery_required": {"type": "boolean"},
+    "manual_review_required": {"type": "boolean", "const": true},
+    "source_git": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head_before", "head_after", "default_branch"],
+      "properties": {
+        "head_before": {"type": ["string", "null"], "pattern": "^[a-f0-9]{40}$"},
+        "head_after": {"type": ["string", "null"], "pattern": "^[a-f0-9]{40}$"},
+        "default_branch": {"type": "string", "minLength": 1}
+      }
+    },
+    "evidence_hashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "integrated_sandbox_run_sha256",
+        "authenticated_approval_sha256",
+        "apply_readiness_sha256",
+        "real_apply_lock_sha256",
+        "rollback_point_sha256",
+        "post_apply_validation_sha256",
+        "step_summary_sha256"
+      ],
+      "properties": {
+        "integrated_sandbox_run_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "authenticated_approval_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "apply_readiness_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "real_apply_lock_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "rollback_point_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "post_apply_validation_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "step_summary_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      }
+    },
+    "step_summary": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status", "exit_code", "stdout_sha256", "stderr_sha256"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{1,127}$"},
+          "status": {"type": "string", "enum": ["success", "failed"]},
+          "exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
+          "stdout_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "stderr_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+        }
+      }
+    },
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "audit_is_read_only",
+        "sandbox_audit_only",
+        "does_not_authorize_apply",
+        "does_not_mutate_source_profiles",
+        "does_not_acquire_or_release_locks",
+        "does_not_execute_rollback",
+        "does_not_read_secret_values",
+        "does_not_mutate_runtime_state",
+        "business_orchestration_not_authorized"
+      ],
+      "properties": {
+        "audit_is_read_only": {"type": "boolean", "const": true},
+        "sandbox_audit_only": {"type": "boolean", "const": true},
+        "does_not_authorize_apply": {"type": "boolean", "const": true},
+        "does_not_mutate_source_profiles": {"type": "boolean", "const": true},
+        "does_not_acquire_or_release_locks": {"type": "boolean", "const": true},
+        "does_not_execute_rollback": {"type": "boolean", "const": true},
+        "does_not_read_secret_values": {"type": "boolean", "const": true},
+        "does_not_mutate_runtime_state": {"type": "boolean", "const": true},
+        "business_orchestration_not_authorized": {"type": "boolean", "const": true}
+      }
+    },
+    "failure_recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manual_review_required", "rollback_not_executed_by_audit", "lock_release_not_performed_by_audit", "note"],
+      "properties": {
+        "manual_review_required": {"type": "boolean", "const": true},
+        "rollback_not_executed_by_audit": {"type": "boolean", "const": true},
+        "lock_release_not_performed_by_audit": {"type": "boolean", "const": true},
+        "note": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}
