@@ -202,7 +202,7 @@ def run_internal_python_command(command: list[str], cwd: Path) -> subprocess.Com
         script = Path(command[1])
         script_path = script if script.is_absolute() else cwd / script
         if script_path.exists():
-            return run_python_script_main(script_path, command[2:], cwd=cwd)
+            return run_python_script_main(script_path, command[2:], cwd=cwd, timeout=0)
     return run_command(command, cwd)
 
 def require_success(process: subprocess.CompletedProcess[str], label: str) -> None:

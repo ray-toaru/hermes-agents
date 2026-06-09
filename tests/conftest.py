@@ -23,9 +23,9 @@ def subprocess_timeout(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
     monkeypatch.setattr(subprocess, "run", run_with_timeout)
     yield
-    # Test helpers and repository-internal dispatch use SIGALRM for fail-closed
-    # in-process script timeouts. Ensure no alarm leaks across tests or into
-    # Python interpreter shutdown, where it can make single-process pytest runs
-    # nondeterministic in sandbox-heavy suites.
+    # Direct run_python_script_main calls may still use SIGALRM for pure-Python
+    # in-process timeout tests. Ensure no alarm leaks across tests or into
+    # Python interpreter shutdown. The test run_script helper and internal
+    # command dispatch avoid SIGALRM around subprocess-heavy scripts.
     signal.setitimer(signal.ITIMER_REAL, 0)
     signal.signal(signal.SIGALRM, signal.SIG_DFL)
