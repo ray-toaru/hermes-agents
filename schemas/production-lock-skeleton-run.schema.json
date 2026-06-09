@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/production-lock-skeleton-run.schema.json",
+  "title": "Hermes AgentOps Production Lock Skeleton Run Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "change_id",
+    "agent",
+    "operator",
+    "generated_at",
+    "generated_by",
+    "action",
+    "status",
+    "design_only",
+    "mutation_enabled",
+    "apply_authorized",
+    "lock_acquired",
+    "lock_released",
+    "production_lock_written",
+    "release_attempted",
+    "profile_mutated",
+    "current_state",
+    "requested_transition",
+    "contract",
+    "evidence_bindings",
+    "decision",
+    "boundaries"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "run_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}_production_lock_skeleton_run$"},
+    "change_id": {"type": "string"},
+    "agent": {"type": "string"},
+    "operator": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string"},
+    "generated_by": {"type": "string", "const": "run-production-lock-lifecycle-skeleton"},
+    "action": {"type": "string", "enum": ["acquire", "preserve"]},
+    "status": {"type": "string", "enum": ["would_acquire_not_executed", "would_preserve_not_released", "failed_closed"]},
+    "design_only": {"type": "boolean", "const": true},
+    "mutation_enabled": {"type": "boolean", "const": false},
+    "apply_authorized": {"type": "boolean", "const": false},
+    "lock_acquired": {"type": "boolean", "const": false},
+    "lock_released": {"type": "boolean", "const": false},
+    "production_lock_written": {"type": "boolean", "const": false},
+    "release_attempted": {"type": "boolean", "const": false},
+    "profile_mutated": {"type": "boolean", "const": false},
+    "current_state": {"type": "string"},
+    "requested_transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to", "executed", "reason"],
+      "properties": {
+        "from": {"type": "string"},
+        "to": {"type": "string"},
+        "executed": {"type": "boolean", "const": false},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "validated", "lock_release_implemented"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*\\\\)(?!.*(^|/)\\.\\.(/|$)).+"},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "validated": {"type": "boolean"},
+        "lock_release_implemented": {"type": "boolean", "const": false}
+      }
+    },
+    "evidence_bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository_head", "authenticated_approval_sha256", "readiness_report_sha256", "rollback_point_sha256", "audit_start_sha256"],
+      "properties": {
+        "repository_head": {"type": "string"},
+        "authenticated_approval_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "readiness_report_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "rollback_point_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "audit_start_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["would_write_lock", "would_preserve_lock", "manual_review_required", "next_allowed_step", "notes"],
+      "properties": {
+        "would_write_lock": {"type": "boolean", "const": false},
+        "would_preserve_lock": {"type": "boolean"},
+        "manual_review_required": {"type": "boolean"},
+        "next_allowed_step": {"type": "string", "enum": ["review_evidence_only", "manual_recovery_review", "fix_contract_or_inputs"]},
+        "notes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "does_not_enable_apply",
+        "does_not_acquire_production_locks",
+        "does_not_release_production_locks",
+        "does_not_write_lock_files",
+        "does_not_mutate_profiles",
+        "does_not_execute_rollback",
+        "does_not_create_production_audit_records",
+        "does_not_read_secret_values",
+        "does_not_mutate_runtime_state",
+        "business_orchestration_not_authorized"
+      ],
+      "properties": {
+        "does_not_enable_apply": {"type": "boolean", "const": true},
+        "does_not_acquire_production_locks": {"type": "boolean", "const": true},
+        "does_not_release_production_locks": {"type": "boolean", "const": true},
+        "does_not_write_lock_files": {"type": "boolean", "const": true},
+        "does_not_mutate_profiles": {"type": "boolean", "const": true},
+        "does_not_execute_rollback": {"type": "boolean", "const": true},
+        "does_not_create_production_audit_records": {"type": "boolean", "const": true},
+        "does_not_read_secret_values": {"type": "boolean", "const": true},
+        "does_not_mutate_runtime_state": {"type": "boolean", "const": true},
+        "business_orchestration_not_authorized": {"type": "boolean", "const": true}
+      }
+    }
+  }
+}

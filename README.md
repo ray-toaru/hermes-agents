@@ -18,6 +18,7 @@ New development agents should read these project-level design documents before c
 - `docs/APPLY_PIPELINE_DESIGN.md` — complete future apply pipeline, including which phases are implemented, read-only, design-only, or blocked.
 - `docs/REAL_APPLY_PIPELINE_DESIGN.md`, `docs/REAL_APPLY_THREAT_MODEL.md`, and `docs/REAL_APPLY_RECOVERY_RUNBOOK.md` — v2.8 design-only real apply package; these do not enable apply.
 - `docs/PRODUCTION_LOCK_LIFECYCLE_DESIGN.md` — v2.9 design/prototype-only production lock lifecycle contract; this does not release production locks.
+- `docs/v2.10-production-lock-skeleton.md` — v2.10 disabled production lock acquire/preserve skeleton; this does not write lock files.
 - `docs/OPERATIONS_AND_RECOVERY.md` — CI, ruleset, stale PR, stale lock, and future recovery handling.
 
 Architecture decisions that should not be repeatedly reopened are recorded under `docs/adr/`.
