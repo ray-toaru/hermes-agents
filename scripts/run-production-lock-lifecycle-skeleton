@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from agentops_common import agent_from_change_id, is_safe_relative_path, run_command, sha256_file
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CONTRACT = "docs/examples/production-apply-lock-lifecycle.yaml"
+ZERO_SHA256 = "0" * 64
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def utc_now_compact() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def current_head(root: Path) -> str:
+    process = run_command(["git", "rev-parse", "HEAD"], root)
+    head = process.stdout.strip()
+    if process.returncode == 0 and len(head) == 40 and all(char in "0123456789abcdef" for char in head):
+        return head
+    return "unknown"
+
+
+def resolve_contract(root: Path, value: str) -> Path:
+    if not is_safe_relative_path(value):
+        raise RuntimeError(f"contract path must be a safe repository-relative path: {value}")
+    return root / value
+
+
+def validate_contract(root: Path, contract_path: Path) -> bool:
+    rel = contract_path.relative_to(root).as_posix()
+    process = run_command([sys.executable, "scripts/check-production-apply-lock-lifecycle", rel], root)
+    return process.returncode == 0
+
+
+def boundaries() -> dict[str, bool]:
+    return {
+        "does_not_enable_apply": True,
+        "does_not_acquire_production_locks": True,
+        "does_not_release_production_locks": True,
+        "does_not_write_lock_files": True,
+        "does_not_mutate_profiles": True,
+        "does_not_execute_rollback": True,
+        "does_not_create_production_audit_records": True,
+        "does_not_read_secret_values": True,
+        "does_not_mutate_runtime_state": True,
+        "business_orchestration_not_authorized": True,
+    }
+
+
+def build_report(args: argparse.Namespace, root: Path, contract_path: Path, contract_valid: bool) -> dict[str, Any]:
+    agent = agent_from_change_id(args.change_id)
+    if agent is None:
+        raise RuntimeError("change_id must use timestamp_agent_digest format")
+    digest = args.change_id.split("_")[2]
+    requested_to = "acquired" if args.action == "acquire" else "preserved_for_review"
+    valid_acquire = args.action == "acquire" and args.current_state == "not_acquired" and contract_valid
+    valid_preserve = args.action == "preserve" and args.current_state in {"recovery_required", "preserved_for_review"} and contract_valid
+    if valid_acquire:
+        status = "would_acquire_not_executed"
+        next_allowed_step = "review_evidence_only"
+        manual_review_required = False
+        would_preserve = False
+    elif valid_preserve:
+        status = "would_preserve_not_released"
+        next_allowed_step = "manual_recovery_review"
+        manual_review_required = True
+        would_preserve = True
+    else:
+        status = "failed_closed"
+        next_allowed_step = "fix_contract_or_inputs"
+        manual_review_required = True
+        would_preserve = args.action == "preserve"
+    return {
+        "schema_version": 1,
+        "run_id": f"{utc_now_compact()}_{agent}_{digest}_production_lock_skeleton_run",
+        "change_id": args.change_id,
+        "agent": agent,
+        "operator": args.operator,
+        "generated_at": utc_now_iso(),
+        "generated_by": "run-production-lock-lifecycle-skeleton",
+        "action": args.action,
+        "status": status,
+        "design_only": True,
+        "mutation_enabled": False,
+        "apply_authorized": False,
+        "lock_acquired": False,
+        "lock_released": False,
+        "production_lock_written": False,
+        "release_attempted": False,
+        "profile_mutated": False,
+        "current_state": args.current_state,
+        "requested_transition": {
+            "from": args.current_state,
+            "to": requested_to,
+            "executed": False,
+            "reason": "v2.10 skeleton records intended acquire/preserve decision without executing production lock state changes.",
+        },
+        "contract": {
+            "path": contract_path.relative_to(root).as_posix(),
+            "sha256": sha256_file(contract_path) if contract_path.exists() else ZERO_SHA256,
+            "validated": contract_valid,
+            "lock_release_implemented": False,
+        },
+        "evidence_bindings": {
+            "repository_head": current_head(root),
+            "authenticated_approval_sha256": args.authenticated_approval_sha256,
+            "readiness_report_sha256": args.readiness_report_sha256,
+            "rollback_point_sha256": args.rollback_point_sha256,
+            "audit_start_sha256": args.audit_start_sha256,
+        },
+        "decision": {
+            "would_write_lock": False,
+            "would_preserve_lock": would_preserve,
+            "manual_review_required": manual_review_required,
+            "next_allowed_step": next_allowed_step,
+            "notes": [
+                "No production lock file was written.",
+                "No production lock release was attempted.",
+                "Real apply remains disabled.",
+            ],
+        },
+        "boundaries": boundaries(),
+    }
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="run-production-lock-lifecycle-skeleton")
+    parser.add_argument("change_id")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--contract", default=DEFAULT_CONTRACT)
+    parser.add_argument("--operator", required=True)
+    parser.add_argument("--action", choices=["acquire", "preserve"], required=True)
+    parser.add_argument("--current-state", default="not_acquired")
+    parser.add_argument("--authenticated-approval-sha256", default=ZERO_SHA256)
+    parser.add_argument("--readiness-report-sha256", default=ZERO_SHA256)
+    parser.add_argument("--rollback-point-sha256")
+    parser.add_argument("--audit-start-sha256")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    try:
+        contract_path = resolve_contract(root, args.contract)
+        contract_valid = validate_contract(root, contract_path)
+        report = build_report(args, root, contract_path, contract_valid)
+    except Exception as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(yaml.safe_dump(report, sort_keys=False), end="")
+    return 0 if report["status"] != "failed_closed" else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

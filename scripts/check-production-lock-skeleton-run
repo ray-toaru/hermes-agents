@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+
+from agentops_common import is_safe_relative_path, load_json, load_yaml, run_command, sha256_file
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def schema_errors(root: Path, data: dict[str, Any]) -> list[str]:
+    schema = load_json(root / "schemas" / "production-lock-skeleton-run.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    return [
+        f"{'.'.join(str(part) for part in error.path) or '<root>'}: {error.message}"
+        for error in sorted(validator.iter_errors(data), key=lambda item: list(item.path))
+    ]
+
+
+def validate_contract(root: Path, data: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    contract = data["contract"]
+    contract_rel = contract["path"]
+    if not is_safe_relative_path(contract_rel):
+        return [f"contract.path must be a safe repository-relative path: {contract_rel}"]
+    contract_path = root / contract_rel
+    if not contract_path.exists():
+        errors.append(f"contract.path does not exist: {contract_rel}")
+        return errors
+    actual_hash = sha256_file(contract_path)
+    if contract["sha256"] != actual_hash:
+        errors.append(f"contract.sha256 mismatch: expected {actual_hash}, got {contract['sha256']}")
+    process = run_command([sys.executable, "scripts/check-production-apply-lock-lifecycle", contract_rel], root)
+    if process.returncode != 0:
+        errors.append("referenced production lock lifecycle contract is invalid")
+    if contract.get("lock_release_implemented") is not False:
+        errors.append("contract.lock_release_implemented must remain false")
+    return errors
+
+
+def validate_apply_disabled(root: Path) -> list[str]:
+    process = run_command([sys.executable, "scripts/hermes-agentops", "apply", "probe"], root)
+    if process.returncode == 0 or "not implemented" not in (process.stdout + process.stderr):
+        return ["hermes-agentops apply must remain disabled and return non-zero"]
+    return []
+
+
+def semantic_errors(data: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    false_fields = [
+        "mutation_enabled",
+        "apply_authorized",
+        "lock_acquired",
+        "lock_released",
+        "production_lock_written",
+        "release_attempted",
+        "profile_mutated",
+    ]
+    for field in false_fields:
+        if data.get(field) is not False:
+            errors.append(f"{field} must be false")
+    if data["decision"].get("would_write_lock") is not False:
+        errors.append("decision.would_write_lock must be false")
+    if data["requested_transition"].get("executed") is not False:
+        errors.append("requested_transition.executed must be false")
+    for field, value in data["boundaries"].items():
+        if value is not True:
+            errors.append(f"boundaries.{field} must be true")
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="check-production-lock-skeleton-run")
+    parser.add_argument("path", nargs="?", default="docs/examples/production-lock-skeleton-run.yaml")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    path = Path(args.path)
+    path = path if path.is_absolute() else root / path
+    try:
+        data = load_yaml(path)
+    except Exception as exc:
+        print(f"failed to load {path}: {exc}")
+        return 1
+    errors = schema_errors(root, data)
+    if not errors:
+        errors.extend(validate_contract(root, data))
+        errors.extend(validate_apply_disabled(root))
+        errors.extend(semantic_errors(data))
+    if errors:
+        for error in errors:
+            print(error)
+        return 1
+    print(f"production lock skeleton run valid: {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
