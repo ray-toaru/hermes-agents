@@ -73,3 +73,23 @@ def test_run_python_script_main_returns_timeout_failure(tmp_path: Path) -> None:
 
     assert result.returncode == TIMEOUT_EXIT_CODE
     assert "in-process script timed out" in result.stderr
+
+
+def test_run_internal_python_command_does_not_alarm_subprocess_heavy_script(tmp_path: Path) -> None:
+    script = tmp_path / "slow_child_tool.py"
+    script.write_text(
+        "import sys\n"
+        f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
+        "from agentops_common import run_command\n"
+        "def main(argv):\n"
+        "    child = run_command([sys.executable, '-c', 'import time; time.sleep(1)'], timeout=3)\n"
+        "    print('child_return=' + str(child.returncode))\n"
+        "    return child.returncode\n",
+        encoding="utf-8",
+    )
+
+    result = run_internal_python_command([sys.executable, str(script)], tmp_path)
+
+    assert result.returncode == 0
+    assert "child_return=0" in result.stdout
+    assert result.stderr == ""
