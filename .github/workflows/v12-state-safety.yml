@@ -1,0 +1,27 @@
+name: v12-state-safety
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/v12-state-safety.yml'
+      - 'docs/v2.12-state-safety-contract.md'
+      - 'docs/examples/state-safety-contract.yaml'
+      - 'schemas/state-safety-contract.schema.json'
+      - 'tests/test_state_safety_contract.py'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml jsonschema pytest
+      - name: Run tests
+        run: |
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 timeout 120 pytest -q tests/test_state_safety_contract.py

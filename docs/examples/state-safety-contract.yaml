@@ -1,0 +1,11 @@
+schema_version: 1
+contract_id: state_safety_contract/v1
+status: design_prototype_only
+design_only: true
+change_enabled: false
+change_done: false
+release_ok: false
+safety_rules:
+  unknown_state_preserves_guard: true
+  missing_evidence_preserves_guard: true
+  manual_review_before_retry: true
