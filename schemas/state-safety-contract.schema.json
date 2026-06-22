@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/state-safety-contract.schema.json",
+  "title": "Hermes AgentOps State Safety Contract",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "contract_id", "status", "design_only", "change_enabled", "change_done", "release_ok", "safety_rules"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "contract_id": {"type": "string", "const": "state_safety_contract/v1"},
+    "status": {"type": "string", "const": "design_prototype_only"},
+    "design_only": {"type": "boolean", "const": true},
+    "change_enabled": {"type": "boolean", "const": false},
+    "change_done": {"type": "boolean", "const": false},
+    "release_ok": {"type": "boolean", "const": false},
+    "safety_rules": {
+      "type": "object",
+      "required": ["unknown_state_preserves_guard", "missing_evidence_preserves_guard", "manual_review_before_retry"],
+      "properties": {
+        "unknown_state_preserves_guard": {"type": "boolean", "const": true},
+        "missing_evidence_preserves_guard": {"type": "boolean", "const": true},
+        "manual_review_before_retry": {"type": "boolean", "const": true}
+      }
+    }
+  }
+}
