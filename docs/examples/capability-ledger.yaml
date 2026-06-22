@@ -1,0 +1,31 @@
+schema_version: 1
+ledger_id: capability_ledger/v1
+items:
+  - name: production_lock_skeleton
+    status: present
+    paths:
+      - docs/v2.10-production-lock-skeleton.md
+      - schemas/production-lock-skeleton-run.schema.json
+  - name: test_runner_stability
+    status: present
+    paths:
+      - docs/v2.10.1-test-runner-stability.md
+      - tests/test_agentops_common.py
+  - name: audit_start_contract
+    status: present
+    paths:
+      - docs/v2.11-production-audit-start.md
+      - schemas/production-audit-start.schema.json
+  - name: state_safety_contract
+    status: present
+    paths:
+      - docs/v2.12-state-safety-contract.md
+      - schemas/state-safety-contract.schema.json
+  - name: closeout_contract
+    status: present
+    paths:
+      - docs/v13-note.md
+  - name: tracking_doc
+    status: present
+    paths:
+      - docs/v14.md

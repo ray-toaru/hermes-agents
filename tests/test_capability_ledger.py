@@ -1,0 +1,37 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+LEDGER = ROOT / "docs" / "examples" / "capability-ledger.yaml"
+SCHEMA = ROOT / "schemas" / "capability-ledger.schema.json"
+
+
+def load_yaml(path: Path) -> dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def test_ledger_schema_validates() -> None:
+    schema = load_yaml(SCHEMA)
+    data = load_yaml(LEDGER)
+    jsonschema.Draft202012Validator.check_schema(schema)
+    jsonschema.Draft202012Validator(schema).validate(data)
+
+
+def test_ledger_paths_exist() -> None:
+    data = load_yaml(LEDGER)
+    missing = []
+    for item in data["items"]:
+        for rel in item["paths"]:
+            if not (ROOT / rel).exists():
+                missing.append(rel)
+    assert missing == []
+
+
+def test_status_values_are_reviewable() -> None:
+    data = load_yaml(LEDGER)
+    assert {item["status"] for item in data["items"]} <= {"present", "planned", "blocked", "deferred"}
