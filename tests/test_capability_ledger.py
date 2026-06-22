@@ -22,14 +22,22 @@ def test_ledger_schema_validates() -> None:
     jsonschema.Draft202012Validator(schema).validate(data)
 
 
-def test_ledger_paths_exist() -> None:
+def test_present_ledger_paths_exist() -> None:
     data = load_yaml(LEDGER)
     missing = []
     for item in data["items"]:
+        if item["status"] != "present":
+            continue
         for rel in item["paths"]:
             if not (ROOT / rel).exists():
                 missing.append(rel)
     assert missing == []
+
+
+def test_non_present_items_have_notes() -> None:
+    data = load_yaml(LEDGER)
+    missing_notes = [item["name"] for item in data["items"] if item["status"] != "present" and not item.get("note")]
+    assert missing_notes == []
 
 
 def test_status_values_are_reviewable() -> None:

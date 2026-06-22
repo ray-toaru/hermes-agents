@@ -29,3 +29,23 @@ items:
     status: present
     paths:
       - docs/v14.md
+  - name: capability_ledger
+    status: present
+    paths:
+      - docs/v15-capability-ledger.md
+      - schemas/capability-ledger.schema.json
+  - name: completion_index
+    status: planned
+    paths:
+      - docs/planned/completion-index.md
+    note: Add a compact index for remaining closeout contracts.
+  - name: guard_review_notes
+    status: planned
+    paths:
+      - docs/planned/guard-review-notes.md
+    note: Keep future safety review notes separate from active scripts.
+  - name: final_handoff
+    status: deferred
+    paths:
+      - docs/planned/final-handoff.md
+    note: Produce only after all planned passive contracts are present.
