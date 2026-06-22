@@ -1,0 +1,61 @@
+schema_version: 1
+audit_start_id: production_audit_start/v1
+generated_at: "2026-06-09T00:00:00Z"
+generated_by: v2.11-production-audit-start
+status: design_prototype_only
+design_only: true
+mutation_enabled: false
+apply_authorized: false
+production_audit_write_implemented: false
+production_audit_written: false
+audit_start_record_created: false
+pre_mutation_only: true
+repository:
+  name: ray-toaru/hermes-agents
+  default_branch: main
+  head_sha: 0123456789abcdef0123456789abcdef01234567
+change_id: 20260609T000000Z_agentops-manager_0123456789
+agent: agentops-manager
+operator: local-reviewer
+evidence_bindings:
+  authenticated_approval_evidence_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  readiness_report_sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  production_lock_lifecycle_contract_sha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  production_lock_skeleton_run_sha256: dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  rollback_point_evidence_sha256: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  structured_mutation_command_sha256: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  pre_mutation_profile_hash_sha256: '1111111111111111111111111111111111111111111111111111111111111111'
+audit_sequence:
+  audit_start_before_mutation: true
+  mutation_command_dispatched: false
+  completion_audit_required_before_release: true
+  release_blocked_without_completion_audit: true
+  rollback_executed: false
+failure_policy:
+  missing_audit_start_blocks_mutation: true
+  audit_start_write_failure_preserves_lock: true
+  unknown_state_preserves_lock: true
+  manual_review_before_retry: true
+production_blockers:
+  - production audit writing is not implemented
+  - mutation dispatch is not implemented
+  - production lock release is not implemented
+  - production recovery state machine is not implemented
+design_documents:
+  audit_capture_design:
+    path: docs/PRODUCTION_AUDIT_CAPTURE_DESIGN.md
+    required_phrases:
+      - "Status: **design/prototype-only**"
+      - "does not write production audit records"
+      - "audit-start must occur before mutation"
+      - "audit-start write failure preserves the lock"
+boundaries:
+  does_not_enable_apply: true
+  does_not_write_production_audit_records: true
+  does_not_dispatch_mutation: true
+  does_not_release_production_locks: true
+  does_not_mutate_profiles: true
+  does_not_execute_rollback: true
+  does_not_read_secret_values: true
+  does_not_mutate_runtime_state: true
+  business_orchestration_not_authorized: true

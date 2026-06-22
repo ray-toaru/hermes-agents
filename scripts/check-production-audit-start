@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Validate production audit-start design/prototype contracts."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+
+from agentops_common import is_safe_relative_path, load_json, load_yaml, run_internal_python_command, schema_error_messages
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+REQUIRED_BINDINGS = {
+    "authenticated_approval_evidence_sha256",
+    "readiness_report_sha256",
+    "production_lock_lifecycle_contract_sha256",
+    "production_lock_skeleton_run_sha256",
+    "rollback_point_evidence_sha256",
+    "structured_mutation_command_sha256",
+    "pre_mutation_profile_hash_sha256",
+}
+REQUIRED_BLOCKERS = {
+    "production audit writing is not implemented",
+    "mutation dispatch is not implemented",
+    "production lock release is not implemented",
+    "production recovery state machine is not implemented",
+}
+
+
+def validate_design_documents(root: Path, record: dict[str, Any], record_path: Path) -> list[str]:
+    errors: list[str] = []
+    for name, doc in (record.get("design_documents") or {}).items():
+        value = doc.get("path") if isinstance(doc, dict) else None
+        if not isinstance(value, str) or not is_safe_relative_path(value):
+            errors.append(f"{record_path}: design_documents.{name}.path is unsafe: {value!r}")
+            continue
+        path = root / value
+        if not path.exists():
+            errors.append(f"{record_path}: design document does not exist: {value}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        for phrase in doc.get("required_phrases") or []:
+            if phrase not in text:
+                errors.append(f"{record_path}: {value} missing required phrase: {phrase!r}")
+    return errors
+
+
+def validate_semantics(root: Path, record: dict[str, Any], record_path: Path) -> list[str]:
+    errors: list[str] = []
+    missing_bindings = sorted(REQUIRED_BINDINGS - set(record.get("evidence_bindings") or {}))
+    if missing_bindings:
+        errors.append(f"{record_path}: missing evidence bindings: {missing_bindings}")
+    missing_blockers = sorted(REQUIRED_BLOCKERS - set(record.get("production_blockers") or []))
+    if missing_blockers:
+        errors.append(f"{record_path}: missing production blockers: {missing_blockers}")
+    for key, value in (record.get("boundaries") or {}).items():
+        if value is not True:
+            errors.append(f"{record_path}: boundary {key} must be true")
+    errors.extend(validate_design_documents(root, record, record_path))
+    process = run_internal_python_command([sys.executable, "scripts/hermes-agentops", "apply", "__production_audit_start_probe__"], root)
+    output = (process.stdout + process.stderr).lower()
+    if process.returncode == 0:
+        errors.append(f"{record_path}: hermes-agentops apply unexpectedly returned success")
+    elif "not implemented" not in output and "intentionally" not in output and "disabled" not in output:
+        errors.append(f"{record_path}: hermes-agentops apply failed without an explicit disabled/not-implemented message")
+    return errors
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="check-production-audit-start")
+    parser.add_argument("record_paths", nargs="+")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    schema = load_json(root / "schemas" / "production-audit-start.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    all_errors: list[str] = []
+    for value in args.record_paths:
+        path = Path(value)
+        if not path.is_absolute():
+            path = root / path
+        try:
+            record = load_yaml(path)
+        except Exception as exc:
+            all_errors.append(f"{path}: {exc}")
+            continue
+        all_errors.extend(schema_error_messages(record, validator, path))
+        if isinstance(record, dict):
+            all_errors.extend(validate_semantics(root, record, path))
+    if all_errors:
+        for error in all_errors:
+            print(error)
+        return 1
+    print("production audit-start contracts valid")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

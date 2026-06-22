@@ -24,7 +24,7 @@ jobs:
 
       - name: Compile CLI
         run: |
-          python -m py_compile scripts/hermes-agentops scripts/check-codeowners scripts/check-pre-apply-plan scripts/generate-pre-apply-plan scripts/check-apply-lock scripts/acquire-apply-lock scripts/check-rollback-point scripts/check-audit-record scripts/check-approval-identity scripts/check-post-apply-validation scripts/analyze-apply-locks scripts/check-apply-readiness scripts/sandbox-apply-dry-run scripts/check-authenticated-approval scripts/verify-authenticated-approval scripts/check-structured-command scripts/run-structured-command-sandbox scripts/real-apply-lock-prototype scripts/create-rollback-point-prototype scripts/run-post-apply-validation-sandbox scripts/run-integrated-sandbox-mutation scripts/generate-sandbox-mutation-audit scripts/check-sandbox-mutation-audit scripts/simulate-sandbox-recovery scripts/check-sandbox-recovery-simulation scripts/check-real-apply-readiness-review scripts/check-real-apply-design-contract scripts/check-production-apply-lock-lifecycle scripts/run-production-lock-lifecycle-skeleton scripts/check-production-lock-skeleton-run
+          python -m py_compile scripts/hermes-agentops scripts/check-codeowners scripts/check-pre-apply-plan scripts/generate-pre-apply-plan scripts/check-apply-lock scripts/acquire-apply-lock scripts/check-rollback-point scripts/check-audit-record scripts/check-approval-identity scripts/check-post-apply-validation scripts/analyze-apply-locks scripts/check-apply-readiness scripts/sandbox-apply-dry-run scripts/check-authenticated-approval scripts/verify-authenticated-approval scripts/check-structured-command scripts/run-structured-command-sandbox scripts/real-apply-lock-prototype scripts/create-rollback-point-prototype scripts/run-post-apply-validation-sandbox scripts/run-integrated-sandbox-mutation scripts/generate-sandbox-mutation-audit scripts/check-sandbox-mutation-audit scripts/simulate-sandbox-recovery scripts/check-sandbox-recovery-simulation scripts/check-real-apply-readiness-review scripts/check-real-apply-design-contract scripts/check-production-apply-lock-lifecycle scripts/run-production-lock-lifecycle-skeleton scripts/check-production-lock-skeleton-run scripts/check-production-audit-start
 
       - name: Validate schemas
         run: |
@@ -94,6 +94,10 @@ jobs:
         run: |
           python scripts/check-production-lock-skeleton-run docs/examples/production-lock-skeleton-run.yaml
 
+      - name: Validate production audit-start example
+        run: |
+          python scripts/check-production-audit-start docs/examples/production-audit-start.yaml
+
       - name: Run tests (governance and validators)
         run: |
           PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 AGENTOPS_TEST_COMMAND_TIMEOUT_SECONDS=20 AGENTOPS_TEST_SCRIPT_TIMEOUT_SECONDS=20 timeout 180 pytest -q --basetemp=/tmp/agentops-pytest-g1 \
@@ -117,6 +121,7 @@ jobs:
             tests/test_post_apply_validation_validator.py \
             tests/test_pre_apply_plan_generation.py \
             tests/test_production_apply_lock_lifecycle.py \
+            tests/test_production_audit_start.py \
             tests/test_production_lock_skeleton_run.py \
             tests/test_read_only_evidence_chain.py \
             tests/test_real_apply_design_contract.py \
