@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/stage-readiness-v6.schema.json",
+  "title": "Hermes AgentOps Stage Readiness v6",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "readiness_id", "decision", "p9_evidence_present", "next_stage_allowed", "apply_authorized", "real_apply_implementation_allowed", "required_followups"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "readiness_id": {"type": "string", "const": "stage_readiness_v6"},
+    "decision": {"type": "string", "const": "deferred"},
+    "p9_evidence_present": {"type": "boolean", "const": true},
+    "next_stage_allowed": {"type": "boolean", "const": false},
+    "apply_authorized": {"type": "boolean", "const": false},
+    "real_apply_implementation_allowed": {"type": "boolean", "const": false},
+    "required_followups": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+  }
+}
