@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/stage-readiness-v8.schema.json",
+  "title": "Hermes AgentOps Stage Readiness v8",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "readiness_id", "decision", "p10_evidence_present", "next_stage_allowed", "apply_authorized", "real_apply_implementation_allowed", "entrypoint_adapter_present", "single_cli_entrypoint_integrated", "required_followups"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "readiness_id": {"type": "string", "const": "stage_readiness_v8"},
+    "decision": {"type": "string", "const": "deferred"},
+    "p10_evidence_present": {"type": "boolean", "const": true},
+    "next_stage_allowed": {"type": "boolean", "const": false},
+    "apply_authorized": {"type": "boolean", "const": false},
+    "real_apply_implementation_allowed": {"type": "boolean", "const": false},
+    "entrypoint_adapter_present": {"type": "boolean", "const": true},
+    "single_cli_entrypoint_integrated": {"type": "boolean", "const": true},
+    "required_followups": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+  }
+}
