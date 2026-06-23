@@ -1,25 +1,20 @@
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
-import jsonschema
 import yaml
+
+from apply_blocked_helpers import load_apply_blocked_report
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / ("run-" + "apply" + "-entrypoint-blocked")
-SCHEMA = ROOT / "schemas" / ("apply" + "-blocked-report.schema.json")
 PREFLIGHT = ROOT / "docs" / "examples" / "governance-preflight-report.yaml"
 
 
-def validate_report(report: dict) -> None:
-    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
-    jsonschema.Draft202012Validator(schema).validate(report)
-
-
-def run_entrypoint(*args: str) -> dict:
+def run_entrypoint(*args: str) -> dict[str, Any]:
     result = subprocess.run(
         [sys.executable, str(SCRIPT), *args],
         cwd=ROOT,
@@ -27,10 +22,7 @@ def run_entrypoint(*args: str) -> dict:
         capture_output=True,
         check=False,
     )
-    assert result.returncode == 1
-    report = json.loads(result.stdout)
-    validate_report(report)
-    return report
+    return load_apply_blocked_report(result)
 
 
 def test_entrypoint_reports_blocked_with_preflight() -> None:
