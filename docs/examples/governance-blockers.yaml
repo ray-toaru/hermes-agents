@@ -1,0 +1,63 @@
+schema_version: 1
+taxonomy_id: governance_blockers/v1
+blockers:
+  - code: approval_source_missing_reviews
+    category: approval
+    meaning: approval source has no captured approving review
+    current_resolution: fix_input
+  - code: approval_source_not_clean
+    category: approval
+    meaning: approval source indicates a rejection or non-clean review state
+    current_resolution: manual_review
+  - code: lock_source_requires_review
+    category: lock
+    meaning: lock source is unknown or requires review before any later stage
+    current_resolution: manual_review
+  - code: audit_write_not_allowed
+    category: audit
+    meaning: closeout evidence attempted to claim an audit write
+    current_resolution: manual_review
+  - code: lock_release_not_allowed
+    category: lock
+    meaning: closeout evidence attempted to claim a lock release
+    current_resolution: manual_review
+  - code: apply_authorization_not_allowed
+    category: stage
+    meaning: evidence attempted to claim apply authorization
+    current_resolution: defer_next_stage
+  - code: command_state_change_not_allowed
+    category: command
+    meaning: command validation attempted to claim state change
+    current_resolution: manual_review
+  - code: command_guard_release_not_allowed
+    category: command
+    meaning: command validation attempted to claim guard release
+    current_resolution: manual_review
+  - code: runtime_access_requested
+    category: runtime
+    meaning: runtime-adjacent access was requested
+    current_resolution: separate_adr
+  - code: runtime_mutation_requested
+    category: runtime
+    meaning: runtime-adjacent mutation was requested
+    current_resolution: separate_adr
+  - code: protected_value_read_requested
+    category: runtime
+    meaning: protected value read was requested
+    current_resolution: separate_adr
+  - code: stage_decision_not_deferred
+    category: stage
+    meaning: stage readiness is not deferred
+    current_resolution: manual_review
+  - code: next_stage_not_allowed
+    category: stage
+    meaning: next stage was requested before the gate allowed it
+    current_resolution: defer_next_stage
+  - code: real_apply_implementation_not_allowed
+    category: stage
+    meaning: real apply implementation was requested before the gate allowed it
+    current_resolution: defer_next_stage
+  - code: real_apply_deferred
+    category: stage
+    meaning: real apply remains deferred even when all read-only inputs are present
+    current_resolution: defer_next_stage

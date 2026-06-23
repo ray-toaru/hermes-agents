@@ -1,0 +1,28 @@
+name: c41
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/c41.yml'
+      - 'schemas/governance-blockers.schema.json'
+      - 'docs/examples/governance-blockers.yaml'
+      - 'docs/GOVERNANCE_BLOCKERS.md'
+      - 'tests/test_governance_blockers.py'
+      - 'scripts/run-governance-preflight'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml jsonschema pytest
+      - name: Validate blockers
+        run: |
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 timeout 120 pytest -q tests/test_governance_blockers.py
