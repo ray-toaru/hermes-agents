@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/recovery-stage-adr.schema.json",
+  "title": "Hermes AgentOps Recovery Stage ADR",
+  "description": "Deferred ADR for a future recovery implementation stage. This contract does not add a runner or authorize apply.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "adr_id",
+    "status",
+    "command_catalog_required",
+    "post_validation_required",
+    "live_approval_required",
+    "lock_readiness_required",
+    "audit_closeout_required",
+    "runner_enabled",
+    "apply_authorized"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "adr_id": {"type": "string", "minLength": 1},
+    "status": {"type": "string", "const": "deferred"},
+    "command_catalog_required": {"type": "boolean", "const": true},
+    "post_validation_required": {"type": "boolean", "const": true},
+    "live_approval_required": {"type": "boolean", "const": true},
+    "lock_readiness_required": {"type": "boolean", "const": true},
+    "audit_closeout_required": {"type": "boolean", "const": true},
+    "runner_enabled": {"type": "boolean", "const": false},
+    "apply_authorized": {"type": "boolean", "const": false}
+  }
+}
