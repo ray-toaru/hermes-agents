@@ -21,7 +21,7 @@ def load_yaml(path: Path) -> dict:
 
 
 def build_report(change_id: str | None, preflight_report: Path | None) -> dict:
-    blockers = ["real_apply_deferred", "apply_disabled"]
+    blockers = ["real_apply_deferred", "apply_disabled", "not implemented"]
     preflight = {"path": None, "present": False, "decision": None}
     if preflight_report is None:
         blockers.append("preflight_report_not_provided")
