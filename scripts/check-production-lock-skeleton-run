@@ -72,6 +72,47 @@ def semantic_errors(data: dict[str, Any]) -> list[str]:
     for field, value in data["boundaries"].items():
         if value is not True:
             errors.append(f"boundaries.{field} must be true")
+    errors.extend(consistency_errors(data))
+    return errors
+
+
+def consistency_errors(data: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    action = data["action"]
+    status = data["status"]
+    current_state = data["current_state"]
+    transition = data["requested_transition"]
+    decision = data["decision"]
+    if transition.get("from") != current_state:
+        errors.append("requested_transition.from must match current_state")
+    expected_to = "acquired" if action == "acquire" else "preserved_for_review"
+    if transition.get("to") != expected_to:
+        errors.append(f"requested_transition.to must be {expected_to} for action {action}")
+    if action == "acquire" and status == "would_acquire_not_executed":
+        if current_state != "not_acquired":
+            errors.append("acquire evidence must start from not_acquired")
+        if decision.get("would_preserve_lock") is not False:
+            errors.append("acquire evidence must not preserve a lock")
+        if decision.get("manual_review_required") is not False:
+            errors.append("acquire evidence must not require manual recovery review")
+        if decision.get("next_allowed_step") != "review_evidence_only":
+            errors.append("acquire evidence next_allowed_step must be review_evidence_only")
+    elif action == "preserve" and status == "would_preserve_not_released":
+        if current_state not in {"recovery_required", "preserved_for_review"}:
+            errors.append("preserve evidence must start from a review-preserved state")
+        if decision.get("would_preserve_lock") is not True:
+            errors.append("preserve evidence must record would_preserve_lock true")
+        if decision.get("manual_review_required") is not True:
+            errors.append("preserve evidence must require manual review")
+        if decision.get("next_allowed_step") != "manual_recovery_review":
+            errors.append("preserve evidence next_allowed_step must be manual_recovery_review")
+    elif status == "failed_closed":
+        if decision.get("manual_review_required") is not True:
+            errors.append("failed_closed evidence must require manual review")
+        if decision.get("next_allowed_step") != "fix_contract_or_inputs":
+            errors.append("failed_closed evidence next_allowed_step must be fix_contract_or_inputs")
+    else:
+        errors.append(f"status {status!r} is inconsistent with action {action!r}")
     return errors
 
 
