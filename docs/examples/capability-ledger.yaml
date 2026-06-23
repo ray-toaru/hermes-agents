@@ -188,3 +188,16 @@ items:
       - schemas/stage-readiness-v6.schema.json
       - docs/examples/stage-readiness-v6.yaml
       - tests/test_stage_readiness_v6.py
+  - name: apply_entrypoint_adapter
+    status: present
+    paths:
+      - scripts/run-apply-entrypoint-blocked
+      - tests/test_apply_entrypoint_blocked.py
+      - tests/test_apply_entrypoint_tree_guard.py
+  - name: stage_readiness_v7
+    status: present
+    paths:
+      - docs/P10_STAGE_READINESS_V7.md
+      - schemas/stage-readiness-v7.schema.json
+      - docs/examples/stage-readiness-v7.yaml
+      - tests/test_stage_readiness_v7.py
