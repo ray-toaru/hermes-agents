@@ -1,0 +1,30 @@
+name: p6-live-approval-source
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p6-live-approval-source.yml'
+      - 'docs/LIVE_GITHUB_APPROVAL_VERIFIER_DESIGN.md'
+      - 'schemas/live-github-approval-source.schema.json'
+      - 'scripts/verify-live-github-approval-source'
+      - 'tests/test_live_github_approval_source.py'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml jsonschema pytest cryptography
+      - name: Compile verifier
+        run: |
+          python -m py_compile scripts/verify-live-github-approval-source
+      - name: Run verifier tests
+        run: |
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 timeout 120 pytest -q tests/test_live_github_approval_source.py
