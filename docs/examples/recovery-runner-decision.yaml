@@ -1,0 +1,12 @@
+schema_version: 1
+decision_id: recovery_runner_decision/v1
+decision: deferred
+runner_enabled: false
+command_execution_enabled: false
+state_change_enabled: false
+guard_release_enabled: false
+runtime_access_enabled: false
+manual_review_required: true
+blockers:
+  - runnable_recovery_not_implemented
+  - validation_binding_not_final
