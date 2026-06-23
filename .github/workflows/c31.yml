@@ -2,6 +2,12 @@ name: c31
 
 on:
   pull_request:
+    paths:
+      - '.github/workflows/c31.yml'
+      - 'docs/STAGE_READINESS_V3.md'
+      - 'docs/examples/stage-readiness-v3.yaml'
+      - 'schemas/stage-readiness-v3.schema.json'
+      - 'tests/test_stage_readiness_v3.py'
   workflow_dispatch:
 
 jobs:
