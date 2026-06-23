@@ -15,7 +15,6 @@ VERIFIER = ROOT / "scripts" / "verify-live-github-approval-source"
 CHECKER = ROOT / "scripts" / "check-authenticated-approval"
 CHANGE_ID = "20260530T000000Z_agentops_aaaaaaaaaa"
 HEAD_SHA = "a" * 40
-DIFF_TEXT = "diff --git a/profile.yaml b/profile.yaml\n"
 
 
 class FakeResponse:
@@ -32,12 +31,22 @@ class FakeResponse:
         return self.payload
 
 
-def fake_urlopen_factory(*, state: str = "APPROVED", permission: str = "write", review_sha: str = HEAD_SHA):
+def change_diff_text(root: Path) -> str:
+    return (root / "changes" / CHANGE_ID / "diff.patch").read_text(encoding="utf-8")
+
+
+def fake_urlopen_factory(
+    diff_text: str,
+    *,
+    state: str = "APPROVED",
+    permission: str = "write",
+    review_sha: str = HEAD_SHA,
+):
     def fake_urlopen(request: Any, timeout: int = 20) -> FakeResponse:
         url = request.full_url
         accept = request.get_header("Accept") or ""
         if accept == "application/vnd.github.v3.diff":
-            return FakeResponse(DIFF_TEXT.encode("utf-8"))
+            return FakeResponse(diff_text.encode("utf-8"))
         if url.endswith("/repos/ray-toaru/hermes-agents"):
             return FakeResponse(b'{"default_branch":"main"}')
         if url.endswith("/pulls/123"):
@@ -78,7 +87,7 @@ def test_network_collector_outputs_source_accepted_by_verifier(tmp_path: Path, m
     init_git_profile(root)
     write_change(root)
     monkeypatch.setenv("GITHUB_TOKEN", "test-token")
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen_factory())
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen_factory(change_diff_text(root)))
 
     collected = run_collector(root)
     assert collected.returncode == 0, collected.stdout + collected.stderr
@@ -131,7 +140,7 @@ def test_network_collector_fails_closed_on_changes_requested(tmp_path: Path, mon
     init_git_profile(root)
     write_change(root)
     monkeypatch.setenv("GITHUB_TOKEN", "test-token")
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen_factory(state="CHANGES_REQUESTED"))
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen_factory(change_diff_text(root), state="CHANGES_REQUESTED"))
 
     result = run_collector(root)
     assert result.returncode == 2
@@ -144,7 +153,7 @@ def test_network_collector_fails_closed_on_low_permission(tmp_path: Path, monkey
     init_git_profile(root)
     write_change(root)
     monkeypatch.setenv("GITHUB_TOKEN", "test-token")
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen_factory(permission="write"))
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen_factory(change_diff_text(root), permission="write"))
 
     result = run_collector(root, "--minimum-permission", "maintain")
     assert result.returncode == 2
@@ -157,7 +166,7 @@ def test_network_collector_fails_closed_on_review_head_mismatch(tmp_path: Path, 
     init_git_profile(root)
     write_change(root)
     monkeypatch.setenv("GITHUB_TOKEN", "test-token")
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen_factory(review_sha="b" * 40))
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen_factory(change_diff_text(root), review_sha="b" * 40))
 
     result = run_collector(root)
     assert result.returncode == 2
