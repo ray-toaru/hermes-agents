@@ -2,6 +2,13 @@ name: c29
 
 on:
   pull_request:
+    paths:
+      - '.github/workflows/c29.yml'
+      - 'docs/PRODUCTION_AUDIT_CLOSEOUT_CONTRACT.md'
+      - 'docs/examples/production-audit-closeout-success.yaml'
+      - 'docs/examples/production-audit-closeout-failure.yaml'
+      - 'schemas/production-audit-closeout.schema.json'
+      - 'tests/test_closeout_contract.py'
   workflow_dispatch:
 
 jobs:

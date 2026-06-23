@@ -2,6 +2,12 @@ name: c30
 
 on:
   pull_request:
+    paths:
+      - '.github/workflows/c30.yml'
+      - 'docs/RECOVERY_STAGE_ADR.md'
+      - 'docs/examples/recovery-stage-adr.yaml'
+      - 'schemas/recovery-stage-adr.schema.json'
+      - 'tests/test_recovery_stage_adr.py'
   workflow_dispatch:
 
 jobs:
