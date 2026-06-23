@@ -1,0 +1,11 @@
+schema_version: 1
+decision_id: guard_write_path_decision/v1
+decision: deferred
+guard_write_enabled: false
+acquire_enabled: false
+release_enabled: false
+unknown_state_preserves_guard: true
+manual_review_required: true
+blockers:
+  - guard_store_write_path_not_implemented
+  - release_gate_not_implemented
