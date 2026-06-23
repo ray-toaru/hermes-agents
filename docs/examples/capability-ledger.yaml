@@ -153,3 +153,38 @@ items:
       - schemas/stage-readiness-v5.schema.json
       - docs/examples/stage-readiness-v5.yaml
       - tests/test_stage_readiness_v5.py
+  - name: apply_blocked_report
+    status: present
+    paths:
+      - scripts/run-apply-blocked-scaffold
+      - schemas/apply-blocked-report.schema.json
+      - docs/examples/apply-blocked-report.yaml
+      - tests/test_apply_blocked_scaffold.py
+  - name: guard_write_path_decision
+    status: present
+    paths:
+      - docs/LOCK_WRITE_PATH_ADR.md
+      - schemas/guard-write-path-decision.schema.json
+      - docs/examples/guard-write-path-decision.yaml
+      - tests/test_guard_write_path_decision.py
+  - name: audit_store_decision
+    status: present
+    paths:
+      - docs/AUDIT_STORE_ADR.md
+      - schemas/audit-store-decision.schema.json
+      - docs/examples/audit-store-decision.yaml
+      - tests/test_audit_store_decision.py
+  - name: recovery_runner_decision
+    status: present
+    paths:
+      - docs/RECOVERY_RUNNER_ADR.md
+      - schemas/recovery-runner-decision.schema.json
+      - docs/examples/recovery-runner-decision.yaml
+      - tests/test_recovery_runner_decision.py
+  - name: stage_readiness_v6
+    status: present
+    paths:
+      - docs/P9_STAGE_READINESS_V6.md
+      - schemas/stage-readiness-v6.schema.json
+      - docs/examples/stage-readiness-v6.yaml
+      - tests/test_stage_readiness_v6.py
