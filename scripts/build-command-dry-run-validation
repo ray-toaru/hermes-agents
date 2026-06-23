@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Build blocked post-command validation records from a passive command catalog."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+from agentops_common import load_json, load_yaml
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def validate_with_schema(root: Path, schema_name: str, document: dict[str, Any]) -> list[str]:
+    schema = load_json(root / "schemas" / schema_name)
+    validator = jsonschema.Draft202012Validator(schema)
+    return [error.message for error in sorted(validator.iter_errors(document), key=lambda item: list(item.path))]
+
+
+def load_catalog(root: Path, path_text: str) -> dict[str, Any]:
+    path = Path(path_text)
+    if not path.is_absolute():
+        path = root / path
+    document = load_yaml(path)
+    if not isinstance(document, dict):
+        raise RuntimeError("catalog must be a mapping")
+    errors = validate_with_schema(root, "command-catalog.schema.json", document)
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    return document
+
+
+def build_validation(root: Path, args: argparse.Namespace) -> dict[str, Any]:
+    catalog = load_catalog(root, args.catalog)
+    entries = {entry["name"]: entry for entry in catalog["entries"]}
+    entry = entries.get(args.entry)
+    if entry is None:
+        raise RuntimeError("catalog entry not found")
+    if entry.get("run_allowed") is not False or entry.get("dispatch_allowed") is not False:
+        raise RuntimeError("catalog entry is not passive")
+    document = {
+        "schema_version": 1,
+        "contract_id": "post_command_validation/v1",
+        "status": "validation_only",
+        "catalog_entry": args.entry,
+        "review_request_id": args.review_request_id,
+        "result_status": "blocked",
+        "state_changed": False,
+        "guard_released": False,
+        "followup_required": True,
+    }
+    errors = validate_with_schema(root, "post-command-validation.schema.json", document)
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    return document
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="build-command-dry-run-validation")
+    parser.add_argument("--catalog", required=True)
+    parser.add_argument("--entry", required=True)
+    parser.add_argument("--review-request-id", required=True)
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    try:
+        document = build_validation(root, args)
+    except Exception as exc:
+        print(f"command dry-run validation failed: {exc}", file=sys.stderr)
+        return 2
+    print(yaml.safe_dump(document, sort_keys=False), end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
