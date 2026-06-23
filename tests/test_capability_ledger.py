@@ -34,6 +34,14 @@ def test_present_ledger_paths_exist() -> None:
     assert missing == []
 
 
+def test_recent_passive_targets_are_marked_present() -> None:
+    data = load_yaml(LEDGER)
+    statuses = {item["name"]: item["status"] for item in data["items"]}
+    assert statuses["completion_index"] == "present"
+    assert statuses["guard_review_notes"] == "present"
+    assert statuses["final_handoff"] == "present"
+
+
 def test_non_present_items_have_notes() -> None:
     data = load_yaml(LEDGER)
     missing_notes = [item["name"] for item in data["items"] if item["status"] != "present" and not item.get("note")]
