@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/audit-store-decision.schema.json",
+  "title": "Hermes AgentOps Audit Store Decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "decision_id", "decision", "audit_store_write_enabled", "append_enabled", "overwrite_enabled", "external_sink_enabled", "tamper_evidence_required", "manual_review_required", "blockers"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "decision_id": {"type": "string", "const": "audit_store_decision/v1"},
+    "decision": {"type": "string", "const": "deferred"},
+    "audit_store_write_enabled": {"type": "boolean", "const": false},
+    "append_enabled": {"type": "boolean", "const": false},
+    "overwrite_enabled": {"type": "boolean", "const": false},
+    "external_sink_enabled": {"type": "boolean", "const": false},
+    "tamper_evidence_required": {"type": "boolean", "const": true},
+    "manual_review_required": {"type": "boolean", "const": true},
+    "blockers": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+  }
+}

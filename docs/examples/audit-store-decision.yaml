@@ -1,0 +1,12 @@
+schema_version: 1
+decision_id: audit_store_decision/v1
+decision: deferred
+audit_store_write_enabled: false
+append_enabled: false
+overwrite_enabled: false
+external_sink_enabled: false
+tamper_evidence_required: true
+manual_review_required: true
+blockers:
+  - audit_store_write_path_not_implemented
+  - retention_policy_not_final
