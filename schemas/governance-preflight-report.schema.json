@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/governance-preflight-report.schema.json",
+  "title": "Hermes AgentOps Governance Preflight Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "report_id", "decision", "inputs", "boundaries", "blockers"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "report_id": {"type": "string", "const": "governance_preflight_report/v1"},
+    "decision": {"type": "string", "const": "blocked"},
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approval_source", "lock_source", "audit_closeout", "command_validation", "runtime_policy", "stage_readiness"],
+      "properties": {
+        "approval_source": {"$ref": "#/$defs/input_ref"},
+        "lock_source": {"$ref": "#/$defs/input_ref"},
+        "audit_closeout": {"$ref": "#/$defs/input_ref"},
+        "command_validation": {"$ref": "#/$defs/input_ref"},
+        "runtime_policy": {"$ref": "#/$defs/input_ref"},
+        "stage_readiness": {"$ref": "#/$defs/input_ref"}
+      }
+    },
+    "boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apply_authorized", "mutation_allowed", "lock_acquire_allowed", "audit_write_allowed", "command_execution_allowed"],
+      "properties": {
+        "apply_authorized": {"type": "boolean", "const": false},
+        "mutation_allowed": {"type": "boolean", "const": false},
+        "lock_acquire_allowed": {"type": "boolean", "const": false},
+        "audit_write_allowed": {"type": "boolean", "const": false},
+        "command_execution_allowed": {"type": "boolean", "const": false}
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "input_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "present"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "present": {"type": "boolean", "const": true}
+      }
+    }
+  }
+}

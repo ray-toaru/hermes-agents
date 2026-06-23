@@ -1,0 +1,30 @@
+schema_version: 1
+report_id: governance_preflight_report/v1
+decision: blocked
+inputs:
+  approval_source:
+    path: docs/examples/live-github-approval-source.yaml
+    present: true
+  lock_source:
+    path: docs/examples/production-lock-readiness-source.yaml
+    present: true
+  audit_closeout:
+    path: docs/examples/production-audit-closeout-success.yaml
+    present: true
+  command_validation:
+    path: docs/examples/post-command-validation.yaml
+    present: true
+  runtime_policy:
+    path: docs/examples/runtime-adjacent-policy.yaml
+    present: true
+  stage_readiness:
+    path: docs/examples/stage-readiness-v4.yaml
+    present: true
+boundaries:
+  apply_authorized: false
+  mutation_allowed: false
+  lock_acquire_allowed: false
+  audit_write_allowed: false
+  command_execution_allowed: false
+blockers:
+  - real_apply_deferred

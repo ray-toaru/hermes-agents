@@ -1,0 +1,29 @@
+name: c40
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/c40.yml'
+      - 'scripts/run-governance-preflight'
+      - 'schemas/governance-preflight-report.schema.json'
+      - 'docs/examples/governance-preflight-report.yaml'
+      - 'docs/GOVERNANCE_PREFLIGHT.md'
+      - 'tests/test_governance_preflight.py'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml jsonschema pytest
+      - name: Validate preflight
+        run: |
+          python -m py_compile scripts/run-governance-preflight
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 timeout 120 pytest -q tests/test_governance_preflight.py

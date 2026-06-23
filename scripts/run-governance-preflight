@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+
+ROOT = Path(__file__).resolve().parents[1]
+REPORT_SCHEMA = ROOT / "schemas" / "governance-preflight-report.schema.json"
+
+
+def load_yaml(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise FileNotFoundError(str(path))
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must contain a YAML mapping")
+    return data
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build a read-only governance preflight report.")
+    parser.add_argument("--approval-source", required=True)
+    parser.add_argument("--lock-source", required=True)
+    parser.add_argument("--audit-closeout", required=True)
+    parser.add_argument("--command-validation", required=True)
+    parser.add_argument("--runtime-policy", required=True)
+    parser.add_argument("--stage-readiness", required=True)
+    return parser.parse_args()
+
+
+def input_ref(path: Path) -> dict[str, Any]:
+    return {"path": str(path), "present": True}
+
+
+def main() -> int:
+    args = parse_args()
+    paths = {
+        "approval_source": Path(args.approval_source),
+        "lock_source": Path(args.lock_source),
+        "audit_closeout": Path(args.audit_closeout),
+        "command_validation": Path(args.command_validation),
+        "runtime_policy": Path(args.runtime_policy),
+        "stage_readiness": Path(args.stage_readiness),
+    }
+
+    try:
+        sources = {name: load_yaml(path) for name, path in paths.items()}
+    except (FileNotFoundError, ValueError, yaml.YAMLError) as exc:
+        print(f"preflight input error: {exc}", file=sys.stderr)
+        return 1
+
+    blockers: list[str] = []
+
+    approval = sources["approval_source"]
+    if not approval.get("approval_reviews"):
+        blockers.append("approval_source_missing_reviews")
+    if approval.get("no_rejections_present") is not True:
+        blockers.append("approval_source_not_clean")
+
+    lock_source = sources["lock_source"]
+    if lock_source.get("current_state") in {"unknown", "recovery_required"}:
+        blockers.append("lock_source_requires_review")
+
+    audit = sources["audit_closeout"]
+    if audit.get("production_record_written") is not False:
+        blockers.append("audit_write_not_allowed")
+    if audit.get("release_allowed") is not False:
+        blockers.append("lock_release_not_allowed")
+    if audit.get("apply_authorized") is not False:
+        blockers.append("apply_authorization_not_allowed")
+
+    command = sources["command_validation"]
+    if command.get("state_changed") is not False:
+        blockers.append("command_state_change_not_allowed")
+    if command.get("guard_released") is not False:
+        blockers.append("command_guard_release_not_allowed")
+
+    runtime = sources["runtime_policy"]
+    for domain in runtime.get("domains", []):
+        if domain.get("current_access_allowed") is not False:
+            blockers.append("runtime_access_requested")
+        if domain.get("mutation_allowed") is not False:
+            blockers.append("runtime_mutation_requested")
+        if domain.get("protected_value_read_allowed") is not False:
+            blockers.append("protected_value_read_requested")
+
+    stage = sources["stage_readiness"]
+    if stage.get("decision") != "deferred":
+        blockers.append("stage_decision_not_deferred")
+    if stage.get("next_stage_allowed") is not False:
+        blockers.append("next_stage_not_allowed")
+    if stage.get("apply_authorized") is not False:
+        blockers.append("apply_authorization_not_allowed")
+    if stage.get("real_apply_implementation_allowed") is not False:
+        blockers.append("real_apply_implementation_not_allowed")
+
+    if not blockers:
+        blockers.append("real_apply_deferred")
+
+    report = {
+        "schema_version": 1,
+        "report_id": "governance_preflight_report/v1",
+        "decision": "blocked",
+        "inputs": {name: input_ref(path) for name, path in paths.items()},
+        "boundaries": {
+            "apply_authorized": False,
+            "mutation_allowed": False,
+            "lock_acquire_allowed": False,
+            "audit_write_allowed": False,
+            "command_execution_allowed": False,
+        },
+        "blockers": sorted(set(blockers)),
+    }
+
+    schema = load_yaml(REPORT_SCHEMA)
+    jsonschema.Draft202012Validator(schema).validate(report)
+    print(yaml.safe_dump(report, sort_keys=False), end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
