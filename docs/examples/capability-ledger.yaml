@@ -46,3 +46,21 @@ items:
     status: present
     paths:
       - docs/planned/final-note.md
+  - name: command_catalog
+    status: present
+    paths:
+      - docs/COMMAND_CATALOG_DESIGN.md
+      - schemas/command-catalog.schema.json
+      - tests/test_command_catalog.py
+  - name: post_command_validation
+    status: present
+    paths:
+      - docs/POST_COMMAND_VALIDATION_CONTRACT.md
+      - schemas/post-command-validation.schema.json
+      - tests/test_post_command_validation.py
+  - name: governance_stage_gate
+    status: present
+    paths:
+      - docs/GOVERNANCE_STAGE_GATE_ADR.md
+      - schemas/governance-stage-gate.schema.json
+      - tests/test_governance_stage_gate.py
