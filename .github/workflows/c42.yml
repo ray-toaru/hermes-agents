@@ -1,0 +1,30 @@
+name: c42
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/c42.yml'
+      - 'schemas/stage-readiness-v5.schema.json'
+      - 'docs/examples/stage-readiness-v5.yaml'
+      - 'docs/P8_STAGE_READINESS_V5.md'
+      - 'tests/test_stage_readiness_v5.py'
+      - 'docs/examples/capability-ledger.yaml'
+      - 'docs/IMPLEMENTATION_MATRIX.md'
+      - 'tests/test_capability_ledger.py'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml jsonschema pytest
+      - name: Validate readiness v5
+        run: |
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 timeout 120 pytest -q tests/test_stage_readiness_v5.py tests/test_capability_ledger.py

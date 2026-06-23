@@ -1,0 +1,12 @@
+schema_version: 1
+readiness_id: stage_readiness_v5
+decision: deferred
+p8_evidence_present: true
+next_stage_allowed: false
+apply_authorized: false
+real_apply_implementation_allowed: false
+required_followups:
+  - hard-disabled apply scaffold ADR
+  - integrated lock write path ADR
+  - production audit store ADR
+  - recovery runner ADR

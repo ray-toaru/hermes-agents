@@ -132,3 +132,24 @@ items:
       - docs/P7_STAGE_READINESS_V4.md
       - schemas/stage-readiness-v4.schema.json
       - tests/test_stage_readiness_v4.py
+  - name: governance_preflight
+    status: present
+    paths:
+      - docs/GOVERNANCE_PREFLIGHT.md
+      - schemas/governance-preflight-report.schema.json
+      - scripts/run-governance-preflight
+      - tests/test_governance_preflight.py
+  - name: governance_blockers
+    status: present
+    paths:
+      - docs/GOVERNANCE_BLOCKERS.md
+      - schemas/governance-blockers.schema.json
+      - docs/examples/governance-blockers.yaml
+      - tests/test_governance_blockers.py
+  - name: stage_readiness_v5
+    status: present
+    paths:
+      - docs/P8_STAGE_READINESS_V5.md
+      - schemas/stage-readiness-v5.schema.json
+      - docs/examples/stage-readiness-v5.yaml
+      - tests/test_stage_readiness_v5.py

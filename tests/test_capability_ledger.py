@@ -49,6 +49,9 @@ def test_recent_passive_targets_are_marked_present() -> None:
     assert statuses["production_audit_closeout_dry_run"] == "present"
     assert statuses["runtime_adjacent_policy"] == "present"
     assert statuses["stage_readiness_v4"] == "present"
+    assert statuses["governance_preflight"] == "present"
+    assert statuses["governance_blockers"] == "present"
+    assert statuses["stage_readiness_v5"] == "present"
 
 
 def test_non_present_items_have_notes() -> None:
