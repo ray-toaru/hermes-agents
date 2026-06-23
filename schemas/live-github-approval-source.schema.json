@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/live-github-approval-source.schema.json",
+  "title": "Hermes AgentOps Captured GitHub Approval Source",
+  "description": "Read-only captured GitHub approval facts consumed by verify-live-github-approval-source. This source does not authorize apply.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_id",
+    "repository",
+    "change_id",
+    "agent",
+    "diff_sha256",
+    "pull_request",
+    "approval_reviews",
+    "no_rejections_present",
+    "retrieved_at"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "source_id": {"type": "string", "minLength": 1},
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "full_name", "default_branch"],
+      "properties": {
+        "provider": {"type": "string", "const": "github"},
+        "full_name": {"type": "string", "minLength": 1},
+        "default_branch": {"type": "string", "minLength": 1}
+      }
+    },
+    "change_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}$"},
+    "agent": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+    "diff_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "pull_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "head_sha", "base_branch"],
+      "properties": {
+        "number": {"type": "integer", "minimum": 1},
+        "head_sha": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+        "base_branch": {"type": "string", "minLength": 1}
+      }
+    },
+    "approval_reviews": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["review_id", "reviewer", "state", "submitted_at", "commit_sha", "permission", "identity_subject"],
+        "properties": {
+          "review_id": {"type": ["integer", "string"]},
+          "reviewer": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$"},
+          "state": {"type": "string", "const": "APPROVED"},
+          "submitted_at": {"type": "string", "format": "date-time"},
+          "commit_sha": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+          "permission": {"type": "string", "enum": ["write", "maintain", "admin"]},
+          "identity_subject": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "no_rejections_present": {"type": "boolean", "const": true},
+    "retrieved_at": {"type": "string", "format": "date-time"}
+  }
+}
