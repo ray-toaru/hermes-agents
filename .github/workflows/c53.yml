@@ -1,0 +1,30 @@
+name: c53
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/c53.yml'
+      - 'scripts/hermes-agentops'
+      - 'scripts/hermes-agentops-core'
+      - 'scripts/run-apply-entrypoint-blocked'
+      - 'tests/test_single_cli_apply_blocked.py'
+      - 'schemas/apply-blocked-report.schema.json'
+      - 'docs/examples/governance-preflight-report.yaml'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml jsonschema pytest
+      - name: Validate single CLI blocked entrypoint
+        run: |
+          python -m py_compile scripts/hermes-agentops tests/test_single_cli_apply_blocked.py
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 timeout 120 pytest -q tests/test_single_cli_apply_blocked.py
