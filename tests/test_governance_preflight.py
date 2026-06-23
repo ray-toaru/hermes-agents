@@ -11,6 +11,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "run-governance-preflight"
 SCHEMA = ROOT / "schemas" / "governance-preflight-report.schema.json"
+EXAMPLE_REPORT = ROOT / "docs" / "examples" / "governance-preflight-report.yaml"
 
 
 def write_yaml(path: Path, data: dict[str, Any]) -> None:
@@ -75,6 +76,18 @@ def test_preflight_report_is_blocked_and_schema_valid(tmp_path: Path) -> None:
         "command_execution_allowed": False,
     }
     assert "real_apply_deferred" in report["blockers"]
+
+
+def test_example_report_references_stage_readiness_v5() -> None:
+    report = yaml.safe_load(EXAMPLE_REPORT.read_text(encoding="utf-8"))
+    schema = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(report)
+    stage_path = report["inputs"]["stage_readiness"]["path"]
+    assert stage_path == "docs/examples/stage-readiness-v5.yaml"
+    stage = yaml.safe_load((ROOT / stage_path).read_text(encoding="utf-8"))
+    assert stage["readiness_id"] == "stage_readiness_v5"
+    assert stage["apply_authorized"] is False
+    assert stage["real_apply_implementation_allowed"] is False
 
 
 def test_preflight_flags_runtime_access_request(tmp_path: Path) -> None:

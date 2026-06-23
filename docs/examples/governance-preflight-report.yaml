@@ -18,7 +18,7 @@ inputs:
     path: docs/examples/runtime-adjacent-policy.yaml
     present: true
   stage_readiness:
-    path: docs/examples/stage-readiness-v4.yaml
+    path: docs/examples/stage-readiness-v5.yaml
     present: true
 boundaries:
   apply_authorized: false
