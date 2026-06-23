@@ -64,3 +64,10 @@ items:
       - docs/GOVERNANCE_STAGE_GATE_ADR.md
       - schemas/governance-stage-gate.schema.json
       - tests/test_governance_stage_gate.py
+  - name: live_github_approval_source
+    status: present
+    paths:
+      - docs/LIVE_GITHUB_APPROVAL_VERIFIER_DESIGN.md
+      - schemas/live-github-approval-source.schema.json
+      - scripts/verify-live-github-approval-source
+      - tests/test_live_github_approval_source.py
