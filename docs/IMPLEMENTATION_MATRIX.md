@@ -36,6 +36,9 @@ This matrix binds project claims to concrete implementation evidence. It is a go
 | State safety contract exists | `docs/v2.12-state-safety-contract.md`; `schemas/state-safety-contract.schema.json`; `docs/examples/state-safety-contract.yaml` | `tests/test_state_safety_contract.py` | Passive contract implemented | Does not change managed state |
 | Closeout and tracking notes exist | `docs/v13-note.md`, `docs/v14.md`, `docs/planned/completion-index.md`, `docs/planned/guard-review-notes.md`, `docs/planned/final-note.md` | `tests/test_capability_ledger.py` | Tracking implemented | Documentation only |
 | Capability ledger exists and is path-checked | `docs/v15-capability-ledger.md`; `docs/examples/capability-ledger.yaml`; `schemas/capability-ledger.schema.json` | `tests/test_capability_ledger.py` | Implemented | Ledger is an index, not authority |
+| Command catalog safety contract exists | `docs/COMMAND_CATALOG_DESIGN.md`; `docs/examples/command-catalog.yaml`; `schemas/command-catalog.schema.json` | `tests/test_command_catalog.py` | Catalog-only implemented | Entries are metadata only; they do not grant run or dispatch authority |
+| Post-command validation contract exists | `docs/POST_COMMAND_VALIDATION_CONTRACT.md`; `docs/examples/post-command-validation.yaml`; `schemas/post-command-validation.schema.json` | `tests/test_post_command_validation.py` | Validation-only implemented | Requires conservative result fields; does not change managed state |
+| Governance stage gate ADR exists | `docs/GOVERNANCE_STAGE_GATE_ADR.md`; `docs/examples/governance-stage-gate.yaml`; `schemas/governance-stage-gate.schema.json` | `tests/test_governance_stage_gate.py` | Deferred gate implemented | Keeps next-stage decision deferred; does not enable real apply |
 | Real mutation command exists | `scripts/hermes-agentops apply` | `tests/test_change_workflow.py::test_apply_remains_disabled` | Not implemented | Must stay disabled until prerequisite ADRs converge |
 
 ## Known Gaps Before Any Real Mutation
@@ -44,7 +47,7 @@ This matrix binds project claims to concrete implementation evidence. It is a go
 | --- | --- | --- |
 | Live GitHub approval verification | A design exists and signed attestations cover a non-fixture path, but direct GitHub review verification is still absent | Read-only adapter with repository, PR/review, diff, approver, permission, rejection, and time binding |
 | Integrated real lock lifecycle | Production lock contracts and skeletons exist, but real production lock acquisition/release is still not integrated with apply | Read-only verifier hardening first; any release path requires separate audit and recovery prerequisites |
-| Rollback execution and validation | Recovery simulation exists, but rollback point records still do not roll back anything | Command registry design, post-rollback validation contract, and audit evidence |
+| Rollback execution and validation | Command catalog and post-command validation contracts now exist, but rollback point records still do not roll back anything | Separate implementation ADR after live approval, lock, audit, and validation prerequisites converge |
 | Production mutation audit capture | Sandbox audit and audit-start contracts exist, but production audit records are not written by any real apply pipeline | Production audit capture for success and failure paths after lock, rollback, validation, and recovery designs converge |
 | Runtime-adjacent operations | Current scope intentionally excludes runtime logs, sessions, gateway, containers, cron, secrets | Separate runtime-adjacent ADRs and policies |
 

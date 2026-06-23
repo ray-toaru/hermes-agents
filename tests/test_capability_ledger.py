@@ -40,6 +40,9 @@ def test_recent_passive_targets_are_marked_present() -> None:
     assert statuses["completion_index"] == "present"
     assert statuses["guard_review_notes"] == "present"
     assert statuses["final_handoff"] == "present"
+    assert statuses["command_catalog"] == "present"
+    assert statuses["post_command_validation"] == "present"
+    assert statuses["governance_stage_gate"] == "present"
 
 
 def test_non_present_items_have_notes() -> None:
