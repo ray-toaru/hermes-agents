@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/governance-stage-gate.schema.json",
+  "title": "Hermes AgentOps Governance Stage Gate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "gate_id", "status", "stage_change_allowed", "implementation_allowed", "required_gates", "current_decision"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "gate_id": {"type": "string", "const": "governance_stage_gate/v1"},
+    "status": {"type": "string", "const": "proposed_deferred"},
+    "stage_change_allowed": {"type": "boolean", "const": false},
+    "implementation_allowed": {"type": "boolean", "const": false},
+    "required_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["live_approval_verifier", "lock_lifecycle_evidence", "completion_audit_evidence", "command_catalog", "post_command_validation"],
+      "properties": {
+        "live_approval_verifier": {"type": "string", "const": "required"},
+        "lock_lifecycle_evidence": {"type": "string", "const": "required"},
+        "completion_audit_evidence": {"type": "string", "const": "required"},
+        "command_catalog": {"type": "string", "const": "required"},
+        "post_command_validation": {"type": "string", "const": "required"}
+      }
+    },
+    "current_decision": {"type": "string", "const": "defer"}
+  }
+}

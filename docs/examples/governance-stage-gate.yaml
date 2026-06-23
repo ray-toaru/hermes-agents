@@ -1,0 +1,12 @@
+schema_version: 1
+gate_id: governance_stage_gate/v1
+status: proposed_deferred
+stage_change_allowed: false
+implementation_allowed: false
+required_gates:
+  live_approval_verifier: required
+  lock_lifecycle_evidence: required
+  completion_audit_evidence: required
+  command_catalog: required
+  post_command_validation: required
+current_decision: defer
