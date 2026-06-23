@@ -12,6 +12,7 @@ import yaml
 from test_change_workflow import run_agentops
 from test_structured_command_validator import valid_record, write_yaml
 from agentops_test_utils import run_script
+from apply_blocked_helpers import assert_apply_blocked_report
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts" / "run-structured-command-sandbox"
@@ -69,7 +70,7 @@ def test_validation_only_runner_executes_allowlisted_command_in_sandbox(tmp_path
 
     apply_attempt = run_agentops(root, "apply", CHANGE_ID)
     assert apply_attempt.returncode == 1
-    assert "intentionally not implemented" in apply_attempt.stdout
+    assert_apply_blocked_report(apply_attempt, change_id=CHANGE_ID)
 
 
 def test_runner_fails_closed_for_non_allowlisted_command(tmp_path: Path) -> None:

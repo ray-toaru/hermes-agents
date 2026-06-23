@@ -12,6 +12,7 @@ import yaml
 
 from test_change_workflow import run_agentops, write_change
 from agentops_test_utils import run_script
+from apply_blocked_helpers import assert_apply_blocked_report
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts" / "run-post-apply-validation-sandbox"
@@ -94,7 +95,7 @@ def test_runs_post_apply_validation_in_sandbox_without_source_mutation(tmp_path:
 
     apply_attempt = run_agentops(root, "apply", CHANGE_ID)
     assert apply_attempt.returncode == 1
-    assert "intentionally not implemented" in apply_attempt.stdout
+    assert_apply_blocked_report(apply_attempt, change_id=CHANGE_ID)
 
 
 def test_fails_closed_when_patch_cannot_apply(tmp_path: Path) -> None:
