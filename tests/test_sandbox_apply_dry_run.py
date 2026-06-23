@@ -7,6 +7,7 @@ import yaml
 
 from test_change_workflow import init_git_profile, prepare_root, run_agentops, write_change
 from agentops_test_utils import run_script
+from apply_blocked_helpers import assert_apply_blocked_report
 
 ROOT = Path(__file__).resolve().parents[1]
 DRY_RUN = ROOT / "scripts" / "sandbox-apply-dry-run"
@@ -41,7 +42,7 @@ def test_sandbox_apply_dry_run_applies_patch_only_in_sandbox(tmp_path: Path) -> 
 
     apply_attempt = run_agentops(root, "apply", CHANGE_ID)
     assert apply_attempt.returncode == 1
-    assert "intentionally not implemented" in apply_attempt.stdout
+    assert_apply_blocked_report(apply_attempt, change_id=CHANGE_ID)
 
 
 def test_sandbox_apply_dry_run_fails_closed_when_strict_verify_fails(tmp_path: Path) -> None:
