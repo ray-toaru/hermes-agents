@@ -34,6 +34,19 @@ items:
     paths:
       - docs/v15-capability-ledger.md
       - schemas/capability-ledger.schema.json
+  - name: project_status_index
+    status: present
+    paths:
+      - docs/PROJECT_STATUS.md
+      - docs/IMPLEMENTATION_MATRIX.md
+      - docs/ROADMAP.md
+  - name: ci_coverage_map
+    status: present
+    paths:
+      - docs/CI_COVERAGE_MAP.md
+      - .github/workflows/ci.yml
+      - .github/workflows/v15-ledger.yml
+      - tests/test_capability_ledger.py
   - name: completion_index
     status: present
     paths:
