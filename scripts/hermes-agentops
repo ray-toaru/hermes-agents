@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -49,13 +49,20 @@ def rewrite_preflight_paths(root: Path, argv: list[str]) -> list[str]:
     return output
 
 
-def main() -> int:
-    root, rest = split_root(sys.argv[1:])
+def run_child(command: list[str]) -> int:
+    process = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    print(process.stdout, end="")
+    print(process.stderr, end="", file=sys.stderr)
+    return process.returncode
+
+
+def main(argv: list[str] | None = None) -> int:
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    root, rest = split_root(raw_args)
     if rest and rest[0] == "apply":
         adapter_args = rewrite_preflight_paths(root, rest[1:])
-        os.execv(sys.executable, [sys.executable, str(BLOCKED_ENTRYPOINT), *adapter_args])
-    os.execv(sys.executable, [sys.executable, str(CORE), *sys.argv[1:]])
-    return 2
+        return run_child([sys.executable, str(BLOCKED_ENTRYPOINT), *adapter_args])
+    return run_child([sys.executable, str(CORE), *raw_args])
 
 
 if __name__ == "__main__":
