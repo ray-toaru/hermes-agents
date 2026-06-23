@@ -1,0 +1,27 @@
+name: c47
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/c47.yml'
+      - 'docs/AUDIT_STORE_ADR.md'
+      - 'docs/examples/audit-store-decision.yaml'
+      - 'schemas/audit-store-decision.schema.json'
+      - 'tests/test_audit_store_decision.py'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml jsonschema pytest
+      - name: Validate ADR
+        run: |
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 timeout 120 pytest -q tests/test_audit_store_decision.py
