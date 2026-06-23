@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/stage-readiness-v3.schema.json",
+  "title": "Hermes AgentOps Stage Readiness v3",
+  "description": "Readiness gate for a future stage. The current decision remains deferred and does not authorize apply.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "review_id",
+    "decision",
+    "next_stage_allowed",
+    "apply_authorized",
+    "missing_prerequisites"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 3},
+    "review_id": {"type": "string", "minLength": 1},
+    "decision": {"type": "string", "const": "deferred"},
+    "next_stage_allowed": {"type": "boolean", "const": false},
+    "apply_authorized": {"type": "boolean", "const": false},
+    "missing_prerequisites": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    }
+  }
+}
