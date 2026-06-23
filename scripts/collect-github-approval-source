@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""Collect GitHub pull request approval facts into the captured source contract."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+from agentops_common import load_json, sha256_text, utc_now_iso
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+PERMISSION_RANK = {"write": 1, "maintain": 2, "admin": 3}
+
+
+def github_request(api_url: str, path: str, token: str, *, accept: str = "application/vnd.github+json") -> bytes:
+    url = f"{api_url.rstrip('/')}{path}"
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": accept,
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "hermes-agentops-approval-source-collector",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310 - reviewed GitHub API URL only.
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"GitHub request failed {exc.code}: {path}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"GitHub request failed: {path}: {exc.reason}") from exc
+
+
+def github_json(api_url: str, path: str, token: str) -> Any:
+    return json.loads(github_request(api_url, path, token).decode("utf-8"))
+
+
+def github_text(api_url: str, path: str, token: str, *, accept: str) -> str:
+    return github_request(api_url, path, token, accept=accept).decode("utf-8")
+
+
+def validate_source(root: Path, document: dict[str, Any]) -> list[str]:
+    schema = load_json(root / "schemas" / "live-github-approval-source.schema.json")
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    return [error.message for error in sorted(validator.iter_errors(document), key=lambda item: list(item.path))]
+
+
+def latest_approval_reviews(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    approved: dict[str, dict[str, Any]] = {}
+    for review in reviews:
+        state = review.get("state")
+        user = review.get("user") or {}
+        login = user.get("login")
+        if not login:
+            continue
+        if state == "CHANGES_REQUESTED":
+            raise RuntimeError("review changes-requested marker present; failing closed")
+        if state == "APPROVED":
+            approved[login] = review
+    return list(approved.values())
+
+
+def build_source(root: Path, args: argparse.Namespace) -> dict[str, Any]:
+    token = os.environ.get(args.token_env)
+    if not token:
+        raise RuntimeError(f"environment variable {args.token_env} is required")
+
+    repo_path = f"/repos/{args.repository}"
+    repo = github_json(args.api_url, repo_path, token)
+    pr = github_json(args.api_url, f"{repo_path}/pulls/{args.pull_request}", token)
+    reviews = github_json(args.api_url, f"{repo_path}/pulls/{args.pull_request}/reviews", token)
+    diff_text = github_text(args.api_url, f"{repo_path}/pulls/{args.pull_request}", token, accept="application/vnd.github.v3.diff")
+    diff_sha256 = sha256_text(diff_text)
+    if args.expected_diff_sha256 and args.expected_diff_sha256 != diff_sha256:
+        raise RuntimeError("collected diff hash does not match expected diff hash")
+
+    default_branch = str(repo.get("default_branch") or args.default_branch)
+    base_branch = str(((pr.get("base") or {}).get("ref")) or "")
+    if base_branch != args.default_branch:
+        raise RuntimeError("pull request base branch mismatch")
+    head_sha = str(((pr.get("head") or {}).get("sha")) or "")
+    selected = latest_approval_reviews(list(reviews))
+    if not selected:
+        raise RuntimeError("no approving reviews found")
+
+    approval_reviews: list[dict[str, Any]] = []
+    for review in selected:
+        user = review["user"]
+        reviewer = user["login"]
+        permission_doc = github_json(args.api_url, f"{repo_path}/collaborators/{reviewer}/permission", token)
+        permission = permission_doc.get("permission")
+        if permission not in PERMISSION_RANK:
+            raise RuntimeError(f"reviewer {reviewer!r} has unsupported permission {permission!r}")
+        if PERMISSION_RANK[permission] < PERMISSION_RANK[args.minimum_permission]:
+            raise RuntimeError(f"reviewer {reviewer!r} permission below required threshold")
+        commit_sha = str(review.get("commit_id") or "")
+        if commit_sha != head_sha:
+            raise RuntimeError("approval review is not bound to the pull request head")
+        approval_reviews.append(
+            {
+                "review_id": review["id"],
+                "reviewer": reviewer,
+                "state": "APPROVED",
+                "submitted_at": review["submitted_at"],
+                "commit_sha": commit_sha,
+                "permission": permission,
+                "identity_subject": f"github:{user.get('id', reviewer)}",
+            }
+        )
+
+    return {
+        "schema_version": 1,
+        "source_id": f"{args.change_id}_github_network_source",
+        "repository": {"provider": "github", "full_name": args.repository, "default_branch": default_branch},
+        "change_id": args.change_id,
+        "agent": args.agent,
+        "diff_sha256": diff_sha256,
+        "pull_request": {"number": args.pull_request, "head_sha": head_sha, "base_branch": base_branch},
+        "approval_reviews": approval_reviews,
+        "no_rejections_present": True,
+        "retrieved_at": args.retrieved_at or utc_now_iso(),
+    }
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="collect-github-approval-source")
+    parser.add_argument("change_id")
+    parser.add_argument("--agent", required=True)
+    parser.add_argument("--pull-request", type=int, required=True)
+    parser.add_argument("--repository", default="ray-toaru/hermes-agents")
+    parser.add_argument("--default-branch", default="main")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--api-url", default="https://api.github.com")
+    parser.add_argument("--token-env", default="GITHUB_TOKEN")
+    parser.add_argument("--minimum-permission", choices=["write", "maintain", "admin"], default="write")
+    parser.add_argument("--expected-diff-sha256")
+    parser.add_argument("--retrieved-at")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    try:
+        source = build_source(root, args)
+        errors = validate_source(root, source)
+    except Exception as exc:
+        print(f"GitHub approval source collection failed: {exc}", file=sys.stderr)
+        return 2
+    if errors:
+        print("collected approval source validation failed:", file=sys.stderr)
+        for error in errors:
+            print(f"- {error}", file=sys.stderr)
+        return 2
+    print(yaml.safe_dump(source, sort_keys=False), end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -71,6 +71,12 @@ items:
       - schemas/live-github-approval-source.schema.json
       - scripts/verify-live-github-approval-source
       - tests/test_live_github_approval_source.py
+  - name: github_approval_network_source
+    status: present
+    paths:
+      - docs/GITHUB_APPROVAL_NETWORK_ADAPTER.md
+      - scripts/collect-github-approval-source
+      - tests/test_github_approval_network_source.py
   - name: production_lock_readiness_source
     status: present
     paths:
