@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Build a production lock readiness source from a local lock-root without writing locks."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from agentops_common import agent_from_change_id, load_yaml, sha256_text, utc_now_iso
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+STATE_VALUES = {"not_acquired", "acquired", "preserved_for_review", "recovery_required", "unknown"}
+
+
+def computed_lock_id(repository: str, change_id: str, commit_sha: str) -> str:
+    return sha256_text(f"{repository}\n{change_id}\n{commit_sha}")[:32]
+
+
+def load_record(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    document = load_yaml(path)
+    if not isinstance(document, dict):
+        raise RuntimeError("lock record must be a mapping")
+    return document
+
+
+def build_source(args: argparse.Namespace) -> dict[str, Any]:
+    root = Path(args.root).resolve()
+    lock_id = computed_lock_id(args.repository, args.change_id, args.commit_sha)
+    lock_root = Path(args.lock_root)
+    if lock_root.is_absolute() or ".." in lock_root.parts:
+        raise RuntimeError("lock-root must be repository-relative")
+    lock_path = root / lock_root / f"{lock_id}.yaml"
+    record = load_record(lock_path)
+    expected_agent = agent_from_change_id(args.change_id) or "agentops"
+
+    if record is None:
+        lock_owner = f"{expected_agent}:pending"
+        current_state = "not_acquired"
+        audit_present = False
+    else:
+        if record.get("lock_id") not in {None, lock_id}:
+            raise RuntimeError("lock_id mismatch")
+        if record.get("lock_commit_sha") != args.commit_sha:
+            raise RuntimeError("lock commit mismatch")
+        lock_owner = str(record.get("lock_owner") or "")
+        if not lock_owner.startswith(expected_agent):
+            raise RuntimeError("lock_owner must be bound to the change agent")
+        current_state = str(record.get("current_state") or "unknown")
+        if current_state not in STATE_VALUES:
+            raise RuntimeError("unsupported lock current_state")
+        audit_present = bool(record.get("completion_audit_present", False))
+
+    return {
+        "schema_version": 1,
+        "source_id": f"{args.change_id}_lock_path_source",
+        "repository": {"full_name": args.repository, "default_branch": args.default_branch},
+        "change_id": args.change_id,
+        "lock_id": lock_id,
+        "lock_owner": lock_owner,
+        "lock_commit_sha": args.commit_sha,
+        "current_state": current_state,
+        "completion_audit_present": audit_present,
+        "requested_decision": args.requested_decision,
+        "captured_at": args.captured_at or utc_now_iso(),
+    }
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="collect-production-lock-readiness-source")
+    parser.add_argument("change_id")
+    parser.add_argument("--commit-sha", required=True)
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--lock-root", default=".agentops/production-locks")
+    parser.add_argument("--repository", default="ray-toaru/hermes-agents")
+    parser.add_argument("--default-branch", default="main")
+    parser.add_argument("--requested-decision", choices=["readiness", "release_review"], default="readiness")
+    parser.add_argument("--captured-at")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        source = build_source(args)
+    except Exception as exc:
+        print(f"production lock path collection failed: {exc}", file=sys.stderr)
+        return 2
+    print(yaml.safe_dump(source, sort_keys=False), end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

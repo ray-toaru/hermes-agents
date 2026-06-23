@@ -83,6 +83,12 @@ items:
       - schemas/production-lock-readiness-source.schema.json
       - scripts/verify-production-lock-readiness-source
       - tests/test_production_lock_readiness_source.py
+  - name: production_lock_path_dry_run
+    status: present
+    paths:
+      - docs/PRODUCTION_LOCK_PATH_DRY_RUN.md
+      - scripts/collect-production-lock-readiness-source
+      - tests/test_production_lock_path_dry_run.py
   - name: production_audit_closeout_contract
     status: present
     paths:
