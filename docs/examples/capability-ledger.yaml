@@ -71,3 +71,28 @@ items:
       - schemas/live-github-approval-source.schema.json
       - scripts/verify-live-github-approval-source
       - tests/test_live_github_approval_source.py
+  - name: production_lock_readiness_source
+    status: present
+    paths:
+      - schemas/production-lock-readiness-source.schema.json
+      - scripts/verify-production-lock-readiness-source
+      - tests/test_production_lock_readiness_source.py
+  - name: production_audit_closeout_contract
+    status: present
+    paths:
+      - schemas/production-audit-closeout.schema.json
+      - docs/examples/production-audit-closeout-success.yaml
+      - docs/examples/production-audit-closeout-failure.yaml
+      - tests/test_closeout_contract.py
+  - name: recovery_stage_adr
+    status: present
+    paths:
+      - docs/P6_STAGE_ADR.md
+      - schemas/recovery-stage-adr.schema.json
+      - tests/test_recovery_stage_adr.py
+  - name: stage_readiness_v3
+    status: present
+    paths:
+      - schemas/stage-readiness-v3.schema.json
+      - docs/examples/stage-readiness-v3.yaml
+      - tests/test_stage_readiness_v3.py
