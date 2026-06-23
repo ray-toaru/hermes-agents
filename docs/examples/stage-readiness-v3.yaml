@@ -1,0 +1,11 @@
+schema_version: 3
+review_id: stage_readiness_v3/current
+decision: deferred
+next_stage_allowed: false
+apply_authorized: false
+missing_prerequisites:
+  - live_network_adapter
+  - integrated_lock_path
+  - production_audit_pipeline
+  - reviewed_recovery_runner
+  - runtime_policy
