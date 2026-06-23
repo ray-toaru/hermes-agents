@@ -40,6 +40,8 @@ def test_recent_passive_targets_are_marked_present() -> None:
     assert statuses["completion_index"] == "present"
     assert statuses["guard_review_notes"] == "present"
     assert statuses["final_handoff"] == "present"
+    assert statuses["project_status_index"] == "present"
+    assert statuses["ci_coverage_map"] == "present"
     assert statuses["command_catalog"] == "present"
     assert statuses["post_command_validation"] == "present"
     assert statuses["command_dry_run_validation"] == "present"
@@ -63,3 +65,16 @@ def test_non_present_items_have_notes() -> None:
 def test_status_values_are_reviewable() -> None:
     data = load_yaml(LEDGER)
     assert {item["status"] for item in data["items"]} <= {"present", "planned", "blocked", "deferred"}
+
+
+def test_status_index_documents_are_discoverable_from_readme() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "docs/PROJECT_STATUS.md" in readme
+    assert "docs/CI_COVERAGE_MAP.md" in readme
+
+
+def test_ci_coverage_map_names_main_and_ledger_workflows() -> None:
+    coverage_map = (ROOT / "docs" / "CI_COVERAGE_MAP.md").read_text(encoding="utf-8")
+    assert ".github/workflows/ci.yml" in coverage_map
+    assert ".github/workflows/v15-ledger.yml" in coverage_map
+    assert "tests/test_capability_ledger.py" in coverage_map
