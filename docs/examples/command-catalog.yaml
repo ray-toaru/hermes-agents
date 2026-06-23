@@ -1,0 +1,10 @@
+schema_version: 1
+catalog_id: command_catalog/v1
+status: catalog_only
+entries:
+  - name: review-catalog-entry
+    purpose: record a future reviewed command shape
+    owner: agentops-manager
+    risk: high
+    run_allowed: false
+    dispatch_allowed: false
