@@ -201,3 +201,16 @@ items:
       - schemas/stage-readiness-v7.schema.json
       - docs/examples/stage-readiness-v7.yaml
       - tests/test_stage_readiness_v7.py
+  - name: single_cli_apply_entrypoint
+    status: present
+    paths:
+      - scripts/hermes-agentops
+      - scripts/hermes-agentops-core
+      - tests/test_single_cli_apply_blocked.py
+  - name: stage_readiness_v8
+    status: present
+    paths:
+      - docs/P10_STAGE_READINESS_V8.md
+      - schemas/stage-readiness-v8.schema.json
+      - docs/examples/stage-readiness-v8.yaml
+      - tests/test_stage_readiness_v8.py
