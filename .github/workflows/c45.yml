@@ -1,0 +1,28 @@
+name: c45
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/c45.yml'
+      - 'docs/examples/apply-blocked-report.yaml'
+      - 'schemas/apply-blocked-report.schema.json'
+      - 'scripts/run-apply-blocked-scaffold'
+      - 'tests/test_apply_blocked_scaffold.py'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml jsonschema pytest
+      - name: Validate report helper
+        run: |
+          python -m py_compile scripts/run-apply-blocked-scaffold
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 timeout 120 pytest -q tests/test_apply_blocked_scaffold.py
