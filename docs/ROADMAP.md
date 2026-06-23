@@ -2,7 +2,7 @@
 
 ## Current Position
 
-As of v2.9, Hermes AgentOps Manager is a repository governance and evidence-validation control plane with an integrated sandbox-only mutation evidence pipeline, sandbox mutation audit capture, sandbox recovery simulation, a structured real-apply readiness review, a design-only real apply package, a design/prototype-only production lock lifecycle contract, and grouped CI test execution for the current sandbox-heavy suite.
+As of the v15 capability-ledger baseline, Hermes AgentOps Manager is a repository governance and evidence-validation control plane with implemented read-only governance validators, sandbox-only mutation evidence, design/prototype-only production contracts, a hard-disabled apply entrypoint, staged readiness evidence through v8, a capability ledger, and grouped/path-scoped CI coverage documentation.
 
 Implemented capabilities are intentionally limited to:
 
@@ -19,15 +19,19 @@ Implemented capabilities are intentionally limited to:
 - sandbox recovery simulation for success, failure, and unknown-state outcomes without releasing locks or executing rollback;
 - structured P5 real-apply readiness review evidence that permits design-only work while keeping implementation and enablement blocked;
 - design-only real apply pipeline, threat model, recovery runbook, and machine-checkable design contract evidence that still keeps `apply` disabled;
-- design/prototype-only production lock lifecycle contract evidence that defines release eligibility and lock preservation rules without implementing release.
+- design/prototype-only production lock lifecycle contract evidence that defines release eligibility and lock preservation rules without implementing release;
+- disabled production lock skeleton evidence that validates acquire/preserve decisions without writing production locks;
+- production audit-start and closeout contracts plus dry-run/stdout evidence without writing a production audit store;
+- runtime-adjacent policy, guard write-path, audit store, recovery runner, governance preflight, blocker taxonomy, and staged readiness evidence through v8;
+- capability-ledger and CI coverage documentation that make the current project state reviewable.
 
-`apply` remains disabled. Production lock release, profile mutation, rollback execution, runtime management, secret reading, and business orchestration remain out of scope.
+`apply` remains disabled. Production lock writes/releases, production audit-store writes, profile mutation, rollback execution, runtime management, secret reading, and business orchestration remain out of scope.
 
 ## Near-Term Priorities
 
 ### P0: Keep project-level documentation current
 
-Every behavior-changing PR must update project-level docs when it changes implementation status, safety invariants, lifecycle states, or future-vs-current boundaries.
+Every behavior-changing PR must update project-level docs when it changes implementation status, safety invariants, lifecycle states, or future-vs-current boundaries. Current status is indexed in `docs/PROJECT_STATUS.md`, `docs/IMPLEMENTATION_MATRIX.md`, `docs/examples/capability-ledger.yaml`, and `docs/CI_COVERAGE_MAP.md`.
 
 
 ### P0.5: Maintainability, fail-closed subprocess hardening, and test harness stability
@@ -133,7 +137,7 @@ Status: not ready to implement. Signed approval attestation verification, integr
 
 A real mutation command remains blocked until the ADR 0008-0011 prerequisites are implemented and validated as separate fail-closed slices.
 
-The design-only real apply package and production lock lifecycle contract now exist. The next safe steps are prerequisite production implementation slices that still keep `apply` disabled: disabled lock acquire/preserve skeleton, rollback execution design/validation, production audit capture, production post-apply validation, and production recovery state machine. Only after those slices and canary evidence converge, consider an explicit non-default mutation command. It must be separately reviewed and remain fail-closed behind all gates.
+The design-only real apply package, production lock lifecycle contract, disabled production lock skeleton, audit-start contract, audit closeout dry-run, runtime-adjacent policy, governance preflight/blocker taxonomy, recovery runner decision records, and staged readiness evidence now exist. The next safe steps are still non-mutating: migrate remaining legacy blocked-output assertions to schema-based blocked-report assertions, harden disabled lock acquire/preserve evidence, add production audit capture only as read-only/dry-run evidence until audit-store design converges, harden post-apply validation contracts, and refine recovery decisions. Only after those slices and canary evidence converge, consider an explicit non-default mutation command. It must be separately reviewed and remain fail-closed behind all gates.
 
 ## Always Out of Scope for This Track
 
