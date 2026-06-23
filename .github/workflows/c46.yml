@@ -1,0 +1,27 @@
+name: c46
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/c46.yml'
+      - 'docs/LOCK_WRITE_PATH_ADR.md'
+      - 'docs/examples/guard-write-path-decision.yaml'
+      - 'schemas/guard-write-path-decision.schema.json'
+      - 'tests/test_guard_write_path_decision.py'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml jsonschema pytest
+      - name: Validate ADR
+        run: |
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 timeout 120 pytest -q tests/test_guard_write_path_decision.py
