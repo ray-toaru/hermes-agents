@@ -1,0 +1,13 @@
+schema_version: 1
+readiness_id: stage_readiness_v7
+decision: deferred
+p10_evidence_present: true
+next_stage_allowed: false
+apply_authorized: false
+real_apply_implementation_allowed: false
+entrypoint_adapter_present: true
+single_cli_entrypoint_integrated: false
+required_followups:
+  - safely patch hermes-agentops apply to call the blocked report path
+  - keep single CLI entrypoint non-zero until readiness changes
+  - retain tree guard coverage before any future implementation
