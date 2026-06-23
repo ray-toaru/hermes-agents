@@ -1,0 +1,40 @@
+schema_version: 1
+policy_id: runtime_adjacent_policy/v1
+status: policy_only
+domains:
+  - name: runtime_logs
+    scope: runtime log retrieval
+    current_access_allowed: false
+    mutation_allowed: false
+    protected_value_read_allowed: false
+    requires_separate_adr: true
+  - name: sessions
+    scope: live session access
+    current_access_allowed: false
+    mutation_allowed: false
+    protected_value_read_allowed: false
+    requires_separate_adr: true
+  - name: gateway
+    scope: gateway configuration or traffic access
+    current_access_allowed: false
+    mutation_allowed: false
+    protected_value_read_allowed: false
+    requires_separate_adr: true
+  - name: containers
+    scope: container or process control
+    current_access_allowed: false
+    mutation_allowed: false
+    protected_value_read_allowed: false
+    requires_separate_adr: true
+  - name: cron
+    scope: scheduler and background job access
+    current_access_allowed: false
+    mutation_allowed: false
+    protected_value_read_allowed: false
+    requires_separate_adr: true
+  - name: protected_values
+    scope: protected value access
+    current_access_allowed: false
+    mutation_allowed: false
+    protected_value_read_allowed: false
+    requires_separate_adr: true

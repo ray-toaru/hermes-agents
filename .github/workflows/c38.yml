@@ -1,0 +1,29 @@
+name: c38
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/c38.yml'
+      - 'schemas/runtime-adjacent-policy.schema.json'
+      - 'docs/examples/runtime-adjacent-policy.yaml'
+      - 'docs/RUNTIME_ADJACENT_POLICY.md'
+      - 'tests/test_runtime_adjacent_policy.py'
+      - 'docs/examples/capability-ledger.yaml'
+      - 'docs/IMPLEMENTATION_MATRIX.md'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml jsonschema pytest
+      - name: Validate runtime adjacent policy
+        run: |
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 timeout 120 pytest -q tests/test_runtime_adjacent_policy.py

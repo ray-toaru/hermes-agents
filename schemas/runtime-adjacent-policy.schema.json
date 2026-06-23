@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/runtime-adjacent-policy.schema.json",
+  "title": "Hermes AgentOps Runtime Adjacent Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "policy_id", "status", "domains"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "policy_id": {"type": "string", "const": "runtime_adjacent_policy/v1"},
+    "status": {"type": "string", "const": "policy_only"},
+    "domains": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "scope", "current_access_allowed", "mutation_allowed", "protected_value_read_allowed", "requires_separate_adr"],
+        "properties": {
+          "name": {"type": "string", "enum": ["runtime_logs", "sessions", "gateway", "containers", "cron", "protected_values"]},
+          "scope": {"type": "string", "minLength": 1},
+          "current_access_allowed": {"type": "boolean", "const": false},
+          "mutation_allowed": {"type": "boolean", "const": false},
+          "protected_value_read_allowed": {"type": "boolean", "const": false},
+          "requires_separate_adr": {"type": "boolean", "const": true}
+        }
+      }
+    }
+  }
+}
