@@ -124,6 +124,40 @@ def test_checker_rejects_contract_hash_mismatch(tmp_path: Path) -> None:
     assert "contract.sha256" in result.stdout
 
 
+def test_checker_rejects_action_status_mismatch(tmp_path: Path) -> None:
+    record = load_example()
+    record["action"] = "preserve"
+    path = write_yaml(tmp_path / "record.yaml", record)
+    result = run_script(CHECKER, str(path), "--root", str(ROOT))
+    assert result.returncode == 1
+    assert "inconsistent" in result.stdout or "requested_transition.to" in result.stdout
+
+
+def test_checker_rejects_transition_from_mismatch(tmp_path: Path) -> None:
+    record = load_example()
+    record["requested_transition"]["from"] = "other_state"
+    path = write_yaml(tmp_path / "record.yaml", record)
+    result = run_script(CHECKER, str(path), "--root", str(ROOT))
+    assert result.returncode == 1
+    assert "requested_transition.from" in result.stdout
+
+
+def test_checker_rejects_preserve_decision_without_manual_review(tmp_path: Path) -> None:
+    record = load_example()
+    record["action"] = "preserve"
+    record["status"] = "would_preserve_not_released"
+    record["current_state"] = "recovery_required"
+    record["requested_transition"]["from"] = "recovery_required"
+    record["requested_transition"]["to"] = "preserved_for_review"
+    record["decision"]["would_preserve_lock"] = False
+    record["decision"]["manual_review_required"] = False
+    record["decision"]["next_allowed_step"] = "review_evidence_only"
+    path = write_yaml(tmp_path / "record.yaml", record)
+    result = run_script(CHECKER, str(path), "--root", str(ROOT))
+    assert result.returncode == 1
+    assert "preserve evidence" in result.stdout
+
+
 def test_apply_remains_disabled() -> None:
     result = run_script(ROOT / "scripts" / "hermes-agentops", "apply", "probe")
     assert result.returncode != 0
