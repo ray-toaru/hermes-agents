@@ -96,6 +96,12 @@ items:
       - docs/examples/production-audit-closeout-success.yaml
       - docs/examples/production-audit-closeout-failure.yaml
       - tests/test_closeout_contract.py
+  - name: production_audit_closeout_dry_run
+    status: present
+    paths:
+      - docs/PRODUCTION_AUDIT_CLOSEOUT_DRY_RUN.md
+      - scripts/build-production-audit-closeout-dry-run
+      - tests/test_production_audit_closeout_dry_run.py
   - name: recovery_stage_adr
     status: present
     paths:

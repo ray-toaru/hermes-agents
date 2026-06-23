@@ -45,6 +45,7 @@ def test_recent_passive_targets_are_marked_present() -> None:
     assert statuses["governance_stage_gate"] == "present"
     assert statuses["github_approval_network_source"] == "present"
     assert statuses["production_lock_path_dry_run"] == "present"
+    assert statuses["production_audit_closeout_dry_run"] == "present"
 
 
 def test_non_present_items_have_notes() -> None:
