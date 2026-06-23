@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/production-lock-readiness-source.schema.json",
+  "title": "Hermes AgentOps Production Lock Readiness Source",
+  "description": "Read-only captured lock readiness facts. This source never grants acquire or release authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_id",
+    "repository",
+    "change_id",
+    "lock_id",
+    "lock_owner",
+    "lock_commit_sha",
+    "current_state",
+    "completion_audit_present",
+    "requested_decision",
+    "captured_at"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "source_id": {"type": "string", "minLength": 1},
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["full_name", "default_branch"],
+      "properties": {
+        "full_name": {"type": "string", "minLength": 1},
+        "default_branch": {"type": "string", "minLength": 1}
+      }
+    },
+    "change_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}$"},
+    "lock_id": {"type": "string", "minLength": 1},
+    "lock_owner": {"type": "string", "minLength": 1},
+    "lock_commit_sha": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+    "current_state": {"type": "string", "enum": ["not_acquired", "acquired", "preserved_for_review", "recovery_required", "unknown"]},
+    "completion_audit_present": {"type": "boolean"},
+    "requested_decision": {"type": "string", "enum": ["readiness", "release_review"]},
+    "captured_at": {"type": "string", "format": "date-time"}
+  }
+}
