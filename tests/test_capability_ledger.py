@@ -42,6 +42,7 @@ def test_recent_passive_targets_are_marked_present() -> None:
     assert statuses["final_handoff"] == "present"
     assert statuses["command_catalog"] == "present"
     assert statuses["post_command_validation"] == "present"
+    assert statuses["command_dry_run_validation"] == "present"
     assert statuses["governance_stage_gate"] == "present"
     assert statuses["github_approval_network_source"] == "present"
     assert statuses["production_lock_path_dry_run"] == "present"

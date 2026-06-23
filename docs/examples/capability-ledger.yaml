@@ -58,6 +58,12 @@ items:
       - docs/POST_COMMAND_VALIDATION_CONTRACT.md
       - schemas/post-command-validation.schema.json
       - tests/test_post_command_validation.py
+  - name: command_dry_run_validation
+    status: present
+    paths:
+      - docs/COMMAND_DRY_RUN_VALIDATION.md
+      - scripts/build-command-dry-run-validation
+      - tests/test_command_dry_run_validation.py
   - name: governance_stage_gate
     status: present
     paths:

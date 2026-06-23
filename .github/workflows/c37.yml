@@ -1,0 +1,29 @@
+name: c37
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/c37.yml'
+      - 'scripts/build-command-dry-run-validation'
+      - 'tests/test_command_dry_run_validation.py'
+      - 'docs/COMMAND_DRY_RUN_VALIDATION.md'
+      - 'docs/examples/capability-ledger.yaml'
+      - 'docs/IMPLEMENTATION_MATRIX.md'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml jsonschema pytest
+      - name: Validate command dry-run
+        run: |
+          python -m py_compile scripts/build-command-dry-run-validation
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 timeout 120 pytest -q tests/test_command_dry_run_validation.py
