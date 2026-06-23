@@ -9,6 +9,7 @@ import yaml
 
 from test_change_workflow import init_git_profile, prepare_root, write_change
 from agentops_test_utils import run_script
+from apply_blocked_helpers import assert_apply_blocked_report
 
 ROOT = Path(__file__).resolve().parents[1]
 ACQUIRE = ROOT / "scripts" / "acquire-apply-lock"
@@ -244,4 +245,4 @@ def test_apply_remains_disabled_after_lock_acquisition_feature(tmp_path: Path) -
     root = prepare_root(tmp_path)
     result = run_script(CLI, "--root", str(root), "apply", CHANGE_ID)
     assert result.returncode == 1
-    assert "intentionally not implemented" in result.stdout
+    assert_apply_blocked_report(result, change_id=CHANGE_ID)
