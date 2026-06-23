@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/recovery-runner-decision.schema.json",
+  "title": "Hermes AgentOps Recovery Runner Decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "decision_id", "decision", "runner_enabled", "command_execution_enabled", "state_change_enabled", "guard_release_enabled", "runtime_access_enabled", "manual_review_required", "blockers"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "decision_id": {"type": "string", "const": "recovery_runner_decision/v1"},
+    "decision": {"type": "string", "const": "deferred"},
+    "runner_enabled": {"type": "boolean", "const": false},
+    "command_execution_enabled": {"type": "boolean", "const": false},
+    "state_change_enabled": {"type": "boolean", "const": false},
+    "guard_release_enabled": {"type": "boolean", "const": false},
+    "runtime_access_enabled": {"type": "boolean", "const": false},
+    "manual_review_required": {"type": "boolean", "const": true},
+    "blockers": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+  }
+}
