@@ -36,14 +36,14 @@ def run_collector(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def verify_source(root: Path, source_text: str) -> dict[str, object]:
-    path = root / "lock-source.yaml"
+def verify_source(source_root: Path, source_text: str) -> dict[str, object]:
+    path = source_root / "lock-source.yaml"
     path.write_text(source_text, encoding="utf-8")
     result = run_script(
         VERIFIER,
         CHANGE_ID,
         "--root",
-        str(root),
+        str(ROOT),
         "--source",
         str(path),
         "--verified-at",
