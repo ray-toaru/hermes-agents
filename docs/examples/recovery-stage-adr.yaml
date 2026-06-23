@@ -1,0 +1,10 @@
+schema_version: 1
+adr_id: recovery_stage_adr/v1
+status: deferred
+command_catalog_required: true
+post_validation_required: true
+live_approval_required: true
+lock_readiness_required: true
+audit_closeout_required: true
+runner_enabled: false
+apply_authorized: false
