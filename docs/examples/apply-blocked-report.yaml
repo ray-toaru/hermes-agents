@@ -1,0 +1,18 @@
+schema_version: 1
+report_id: apply_blocked_report/v1
+decision: blocked
+change_id: example-change
+preflight_report:
+  path: docs/examples/governance-preflight-report.yaml
+  present: true
+  decision: blocked
+boundaries:
+  apply_authorized: false
+  mutation_allowed: false
+  profile_write_allowed: false
+  runtime_write_allowed: false
+  lock_acquire_allowed: false
+  audit_write_allowed: false
+  command_execution_allowed: false
+blockers:
+  - real_apply_deferred
