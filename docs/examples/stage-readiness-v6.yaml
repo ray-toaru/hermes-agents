@@ -1,0 +1,12 @@
+schema_version: 1
+readiness_id: stage_readiness_v6
+decision: deferred
+p9_evidence_present: true
+next_stage_allowed: false
+apply_authorized: false
+real_apply_implementation_allowed: false
+required_followups:
+  - disabled entrypoint integration ADR
+  - production guard write implementation ADR
+  - production audit store implementation ADR
+  - recovery runner implementation ADR
