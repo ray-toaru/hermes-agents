@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/production-audit-closeout.schema.json",
+  "title": "Hermes AgentOps Production Audit Closeout Contract",
+  "description": "Success and failure closeout evidence shape for a future production audit pipeline. This contract does not write audit records or authorize apply.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "closeout_id",
+    "change_id",
+    "outcome",
+    "start_ref",
+    "completion_ref",
+    "failure_ref",
+    "lock_guard_preserved",
+    "release_allowed",
+    "apply_authorized",
+    "production_record_written"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "closeout_id": {"type": "string", "minLength": 1},
+    "change_id": {"type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z_[a-z][a-z0-9-]{1,62}_[a-f0-9]{10}$"},
+    "outcome": {"type": "string", "enum": ["success", "failure"]},
+    "start_ref": {"type": "string", "minLength": 1},
+    "completion_ref": {"type": ["string", "null"]},
+    "failure_ref": {"type": ["string", "null"]},
+    "lock_guard_preserved": {"type": "boolean", "const": true},
+    "release_allowed": {"type": "boolean", "const": false},
+    "apply_authorized": {"type": "boolean", "const": false},
+    "production_record_written": {"type": "boolean", "const": false}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"outcome": {"const": "success"}}},
+      "then": {
+        "properties": {
+          "completion_ref": {"type": "string", "minLength": 1},
+          "failure_ref": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"outcome": {"const": "failure"}}},
+      "then": {
+        "properties": {
+          "completion_ref": {"type": "null"},
+          "failure_ref": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  ]
+}
