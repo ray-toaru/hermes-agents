@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Verify captured production lock readiness facts without changing locks."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+from agentops_common import agent_from_change_id, load_json, load_yaml, utc_now_iso
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def validate_document(root: Path, document: dict[str, Any]) -> list[str]:
+    schema = load_json(root / "schemas" / "production-lock-readiness-source.schema.json")
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    return [
+        f"{'.'.join(str(part) for part in error.path) or '<root>'}: {error.message}"
+        for error in sorted(validator.iter_errors(document), key=lambda item: list(item.path))
+    ]
+
+
+def load_source(root: Path, source_path: str) -> dict[str, Any]:
+    path = Path(source_path)
+    if not path.is_absolute():
+        path = root / path
+    document = load_yaml(path)
+    if not isinstance(document, dict):
+        raise RuntimeError(f"source must be a mapping: {path}")
+    errors = validate_document(root, document)
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    return document
+
+
+def build_report(args: argparse.Namespace, source: dict[str, Any]) -> dict[str, Any]:
+    repository = source["repository"]
+    if repository["full_name"] != args.repository:
+        raise RuntimeError("source repository full_name mismatch")
+    if repository["default_branch"] != args.default_branch:
+        raise RuntimeError("source repository default_branch mismatch")
+    if source["change_id"] != args.change_id:
+        raise RuntimeError("source change_id mismatch")
+    expected_agent = agent_from_change_id(args.change_id)
+    if expected_agent and not source["lock_owner"].startswith(expected_agent):
+        raise RuntimeError("lock_owner must be bound to the change agent")
+
+    current_state = source["current_state"]
+    audit_present = source["completion_audit_present"]
+    release_review = source["requested_decision"] == "release_review"
+    manual_review_required = current_state in {"preserved_for_review", "recovery_required", "unknown"} or release_review
+    preserve_guard = current_state in {"preserved_for_review", "recovery_required", "unknown"} or not audit_present
+
+    return {
+        "schema_version": 1,
+        "report_id": f"{args.change_id}_production_lock_readiness",
+        "change_id": args.change_id,
+        "repository": repository,
+        "lock_id": source["lock_id"],
+        "lock_owner": source["lock_owner"],
+        "lock_commit_sha": source["lock_commit_sha"],
+        "current_state": current_state,
+        "verified_at": args.verified_at or utc_now_iso(),
+        "mutation_enabled": False,
+        "acquire_allowed": False,
+        "release_allowed": False,
+        "preserve_guard": preserve_guard,
+        "manual_review_required": manual_review_required,
+        "assertions": {
+            "lock_identity_bound": True,
+            "lock_owner_bound": True,
+            "lock_commit_bound": True,
+            "unknown_state_preserves_guard": True,
+            "missing_completion_audit_preserves_guard": True,
+            "does_not_acquire_lock": True,
+            "does_not_release_lock": True,
+            "does_not_authorize_apply": True,
+        },
+    }
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="verify-production-lock-readiness-source")
+    parser.add_argument("change_id")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--source", required=True)
+    parser.add_argument("--repository", default="ray-toaru/hermes-agents")
+    parser.add_argument("--default-branch", default="main")
+    parser.add_argument("--verified-at")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    try:
+        source = load_source(root, args.source)
+        report = build_report(args, source)
+    except Exception as exc:
+        print(f"production lock readiness source verification failed: {exc}", file=sys.stderr)
+        return 2
+    print(yaml.safe_dump(report, sort_keys=False), end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
