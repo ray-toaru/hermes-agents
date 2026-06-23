@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""Verify captured GitHub approval source evidence without contacting GitHub."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+from agentops_common import agent_from_change_id, load_json, load_yaml, sha256_text, utc_now_iso
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+PERMISSION_RANK = {"write": 1, "maintain": 2, "admin": 3}
+
+
+def load_change(root: Path, change_id: str) -> tuple[dict[str, Any], str]:
+    change_dir = root / "changes" / change_id
+    proposal_path = change_dir / "proposal.yaml"
+    diff_path = change_dir / "diff.patch"
+    if not proposal_path.exists():
+        raise RuntimeError(f"missing proposal: {proposal_path.relative_to(root)}")
+    if not diff_path.exists():
+        raise RuntimeError(f"missing diff: {diff_path.relative_to(root)}")
+    proposal = load_yaml(proposal_path)
+    if not isinstance(proposal, dict):
+        raise RuntimeError("proposal must be a mapping")
+    diff_sha256 = sha256_text(diff_path.read_text(encoding="utf-8"))
+    if proposal.get("change_id") != change_id:
+        raise RuntimeError("proposal change_id mismatch")
+    if proposal.get("diff_sha256") != diff_sha256:
+        raise RuntimeError("proposal diff_sha256 mismatch")
+    expected_agent = agent_from_change_id(change_id)
+    if expected_agent and proposal.get("agent") != expected_agent:
+        raise RuntimeError("proposal agent does not match change_id")
+    return proposal, diff_sha256
+
+
+def validate_document(root: Path, document: dict[str, Any], schema_name: str) -> list[str]:
+    schema = load_json(root / "schemas" / schema_name)
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    errors: list[str] = []
+    for error in sorted(validator.iter_errors(document), key=lambda item: list(item.path)):
+        location = ".".join(str(part) for part in error.path) or "<root>"
+        errors.append(f"{location}: {error.message}")
+    return errors
+
+
+def load_source(root: Path, source_path: str) -> dict[str, Any]:
+    path = Path(source_path)
+    if not path.is_absolute():
+        path = root / path
+    document = load_yaml(path)
+    if not isinstance(document, dict):
+        raise RuntimeError(f"source must be a mapping: {path}")
+    errors = validate_document(root, document, "live-github-approval-source.schema.json")
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    return document
+
+
+def build_evidence(root: Path, args: argparse.Namespace) -> dict[str, Any]:
+    if not args.source:
+        raise RuntimeError("--source is required for live_github mode")
+    proposal, diff_sha256 = load_change(root, args.change_id)
+    source = load_source(root, args.source)
+    repository = source["repository"]
+    if repository["full_name"] != args.repository:
+        raise RuntimeError("source repository full_name mismatch")
+    if repository["default_branch"] != args.default_branch:
+        raise RuntimeError("source repository default_branch mismatch")
+    if source["change_id"] != args.change_id:
+        raise RuntimeError("source change_id mismatch")
+    if source["agent"] != proposal.get("agent"):
+        raise RuntimeError("source agent mismatch")
+    if source["diff_sha256"] != diff_sha256:
+        raise RuntimeError("source diff_sha256 mismatch")
+    if source.get("no_rejections_present") is not True:
+        raise RuntimeError("source contains rejection or dismissal evidence; failing closed")
+
+    pr = source["pull_request"]
+    head_sha = pr["head_sha"]
+    verified: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for review in source["approval_reviews"]:
+        reviewer = review["reviewer"]
+        if reviewer in seen:
+            raise RuntimeError(f"duplicate reviewer {reviewer!r}")
+        seen.add(reviewer)
+        if review["commit_sha"] != head_sha:
+            raise RuntimeError(f"review {review['review_id']} is not bound to pull request head")
+        permission = review["permission"]
+        if PERMISSION_RANK[permission] < PERMISSION_RANK[args.minimum_permission]:
+            raise RuntimeError(f"reviewer {reviewer!r} permission {permission!r} is below required {args.minimum_permission!r}")
+        verified.append(
+            {
+                "approver": reviewer,
+                "decision": "approve",
+                "approved_at": review["submitted_at"],
+                "identity_provider": "github",
+                "identity_subject": review["identity_subject"],
+                "permission": permission,
+                "evidence_kind": "pull_request_review",
+                "evidence_ref": f"github://{args.repository}/pull/{pr['number']}#review-{review['review_id']}",
+                "diff_sha256": diff_sha256,
+                "verified": True,
+            }
+        )
+
+    required = int(proposal.get("required_approvals") or 1)
+    if len(verified) < required:
+        raise RuntimeError(f"live approval threshold unmet: {len(verified)} approvals, require {required}")
+
+    return {
+        "schema_version": 1,
+        "authenticated_approval_id": f"{args.change_id}_authenticated_approval",
+        "change_id": args.change_id,
+        "agent": proposal.get("agent"),
+        "repository": {"provider": "github", "full_name": args.repository, "default_branch": args.default_branch},
+        "diff_sha256": diff_sha256,
+        "required_approvals": required,
+        "verified_approvals": verified,
+        "rejections_present": False,
+        "verified_at": args.verified_at or utc_now_iso(),
+        "verified_by": "captured-live-github-source-verifier",
+        "verifier_mode": "live_github",
+        "mutation_enabled": False,
+        "apply_authorized": False,
+        "status": "verified_not_authorized",
+        "assertions": {
+            "repository_bound": True,
+            "change_id_bound": True,
+            "diff_hash_bound": True,
+            "approval_threshold_met": True,
+            "no_rejections_present": True,
+            "all_approvals_verified": True,
+            "does_not_authorize_apply": True,
+            "does_not_mutate_profiles_or_runtime": True,
+            "does_not_read_secret_values": True,
+            "business_orchestration_not_authorized": True,
+        },
+    }
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="verify-live-github-approval-source")
+    parser.add_argument("change_id")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    parser.add_argument("--source", help="captured GitHub approval source YAML")
+    parser.add_argument("--repository", default="ray-toaru/hermes-agents")
+    parser.add_argument("--default-branch", default="main")
+    parser.add_argument("--verified-at")
+    parser.add_argument("--minimum-permission", choices=["write", "maintain", "admin"], default="write")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    try:
+        evidence = build_evidence(root, args)
+        errors = validate_document(root, evidence, "authenticated-approval.schema.json")
+    except Exception as exc:
+        print(f"live GitHub approval source verification failed: {exc}", file=sys.stderr)
+        return 2
+    if errors:
+        print("authenticated approval evidence validation failed:", file=sys.stderr)
+        for error in errors:
+            print(f"- {error}", file=sys.stderr)
+        return 2
+    print(yaml.safe_dump(evidence, sort_keys=False), end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
