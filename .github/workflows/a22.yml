@@ -1,0 +1,28 @@
+name: a22
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/a22.yml'
+      - 'docs/PRODUCTION_AUDIT_CAPTURE_V2.md'
+      - 'docs/examples/production-audit-capture-v2-success.yaml'
+      - 'docs/examples/production-audit-capture-v2-failure.yaml'
+      - 'schemas/production-audit-capture-v2.schema.json'
+      - 'tests/test_production_audit_capture_v2.py'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml jsonschema pytest
+      - name: Run tests
+        run: |
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 timeout 120 pytest -q tests/test_production_audit_capture_v2.py

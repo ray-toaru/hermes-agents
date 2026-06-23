@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/production-audit-capture-v2.schema.json",
+  "title": "Hermes AgentOps Production Audit Capture v2 Contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "contract_id", "status", "design_only", "capture_enabled", "record_written", "path_kind", "required_markers"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "contract_id": {"type": "string", "const": "production_audit_capture_v2/v1"},
+    "status": {"type": "string", "const": "contract_only"},
+    "design_only": {"type": "boolean", "const": true},
+    "capture_enabled": {"type": "boolean", "const": false},
+    "record_written": {"type": "boolean", "const": false},
+    "path_kind": {"type": "string", "enum": ["success", "failure"]},
+    "required_markers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pre_state", "operation_summary", "validation_summary", "completion_or_review"],
+      "properties": {
+        "pre_state": {"type": "boolean", "const": true},
+        "operation_summary": {"type": "boolean", "const": true},
+        "validation_summary": {"type": "boolean", "const": true},
+        "completion_or_review": {"type": "boolean", "const": true}
+      }
+    }
+  }
+}

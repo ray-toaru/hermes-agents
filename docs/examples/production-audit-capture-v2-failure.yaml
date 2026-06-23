@@ -1,0 +1,12 @@
+schema_version: 1
+contract_id: production_audit_capture_v2/v1
+status: contract_only
+design_only: true
+capture_enabled: false
+record_written: false
+path_kind: failure
+required_markers:
+  pre_state: true
+  operation_summary: true
+  validation_summary: true
+  completion_or_review: true
