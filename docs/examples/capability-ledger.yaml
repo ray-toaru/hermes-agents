@@ -108,6 +108,12 @@ items:
       - docs/PRODUCTION_AUDIT_CLOSEOUT_DRY_RUN.md
       - scripts/build-production-audit-closeout-dry-run
       - tests/test_production_audit_closeout_dry_run.py
+  - name: runtime_adjacent_policy
+    status: present
+    paths:
+      - docs/RUNTIME_ADJACENT_POLICY.md
+      - schemas/runtime-adjacent-policy.schema.json
+      - tests/test_runtime_adjacent_policy.py
   - name: recovery_stage_adr
     status: present
     paths:
