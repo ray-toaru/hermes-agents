@@ -1,0 +1,29 @@
+name: c36
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/c36.yml'
+      - 'scripts/build-production-audit-closeout-dry-run'
+      - 'tests/test_production_audit_closeout_dry_run.py'
+      - 'docs/PRODUCTION_AUDIT_CLOSEOUT_DRY_RUN.md'
+      - 'docs/examples/capability-ledger.yaml'
+      - 'docs/IMPLEMENTATION_MATRIX.md'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml jsonschema pytest
+      - name: Validate audit closeout dry-run
+        run: |
+          python -m py_compile scripts/build-production-audit-closeout-dry-run
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 timeout 120 pytest -q tests/test_production_audit_closeout_dry_run.py

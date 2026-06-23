@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Build production audit closeout candidates without writing audit records."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+from agentops_common import load_json
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def build_closeout(args: argparse.Namespace) -> dict[str, Any]:
+    if args.outcome == "success":
+        if not args.completion_ref:
+            raise RuntimeError("success outcome requires --completion-ref")
+        if args.failure_ref:
+            raise RuntimeError("success outcome must not include --failure-ref")
+    if args.outcome == "failure":
+        if not args.failure_ref:
+            raise RuntimeError("failure outcome requires --failure-ref")
+        if args.completion_ref:
+            raise RuntimeError("failure outcome must not include --completion-ref")
+    return {
+        "schema_version": 1,
+        "closeout_id": f"{args.change_id}_{args.outcome}_closeout_candidate",
+        "change_id": args.change_id,
+        "outcome": args.outcome,
+        "start_ref": args.start_ref,
+        "completion_ref": args.completion_ref if args.outcome == "success" else None,
+        "failure_ref": args.failure_ref if args.outcome == "failure" else None,
+        "lock_guard_preserved": True,
+        "release_allowed": False,
+        "apply_authorized": False,
+        "production_record_written": False,
+    }
+
+
+def validate_closeout(root: Path, document: dict[str, Any]) -> list[str]:
+    schema = load_json(root / "schemas" / "production-audit-closeout.schema.json")
+    validator = jsonschema.Draft202012Validator(schema)
+    return [error.message for error in sorted(validator.iter_errors(document), key=lambda item: list(item.path))]
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="build-production-audit-closeout-dry-run")
+    parser.add_argument("change_id")
+    parser.add_argument("--outcome", choices=["success", "failure"], required=True)
+    parser.add_argument("--start-ref", required=True)
+    parser.add_argument("--completion-ref")
+    parser.add_argument("--failure-ref")
+    parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    root = Path(args.root).resolve()
+    try:
+        document = build_closeout(args)
+        errors = validate_closeout(root, document)
+    except Exception as exc:
+        print(f"production audit closeout dry-run failed: {exc}", file=sys.stderr)
+        return 2
+    if errors:
+        print("production audit closeout dry-run validation failed:", file=sys.stderr)
+        for error in errors:
+            print(f"- {error}", file=sys.stderr)
+        return 2
+    print(yaml.safe_dump(document, sort_keys=False), end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
