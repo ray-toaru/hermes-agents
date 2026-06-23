@@ -126,3 +126,9 @@ items:
       - schemas/stage-readiness-v3.schema.json
       - docs/examples/stage-readiness-v3.yaml
       - tests/test_stage_readiness_v3.py
+  - name: stage_readiness_v4
+    status: present
+    paths:
+      - docs/P7_STAGE_READINESS_V4.md
+      - schemas/stage-readiness-v4.schema.json
+      - tests/test_stage_readiness_v4.py
