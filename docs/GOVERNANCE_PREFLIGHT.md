@@ -2,7 +2,7 @@
 
 `run-governance-preflight` is a read-only aggregator for already captured governance evidence.
 
-It consumes local source files for approval, lock readiness, audit closeout, command validation, runtime-adjacent policy, and stage readiness. It emits a unified preflight report with a blocked decision.
+It consumes local source files for approval, lock readiness, audit closeout, command validation, runtime-adjacent policy, and stage readiness. The checked example is aligned to `stage-readiness-v5.yaml` and still emits a unified preflight report with a blocked decision.
 
 Boundary:
 
