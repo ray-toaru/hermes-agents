@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/hermes-agentops/schemas/post-command-validation.schema.json",
+  "title": "Hermes AgentOps Post-Command Validation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "contract_id", "status", "catalog_entry", "review_request_id", "result_status", "state_changed", "guard_released", "followup_required"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "contract_id": {"type": "string", "const": "post_command_validation/v1"},
+    "status": {"type": "string", "const": "validation_only"},
+    "catalog_entry": {"type": "string", "pattern": "^[a-z][a-z0-9-]{2,63}$"},
+    "review_request_id": {"type": "string", "minLength": 1},
+    "result_status": {"type": "string", "enum": ["blocked", "needs_review", "accepted_for_record"]},
+    "state_changed": {"type": "boolean", "const": false},
+    "guard_released": {"type": "boolean", "const": false},
+    "followup_required": {"type": "boolean", "const": true}
+  }
+}

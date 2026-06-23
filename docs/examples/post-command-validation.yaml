@@ -1,0 +1,9 @@
+schema_version: 1
+contract_id: post_command_validation/v1
+status: validation_only
+catalog_entry: review-catalog-entry
+review_request_id: example-review-0001
+result_status: blocked
+state_changed: false
+guard_released: false
+followup_required: true
