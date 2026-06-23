@@ -19,6 +19,7 @@ This matrix is a compact governance index. Detailed per-artifact paths are track
 | Readiness reviews | readiness v3-v8 schemas/examples/tests | Deferred reviews implemented | next stage, apply authorization, and real implementation remain disallowed |
 | Sandbox-only mutation experiments | sandbox apply dry-run, integrated sandbox mutation, sandbox audit, sandbox recovery simulation | Sandbox-only implemented | Temporary workspace only; not production authority |
 | Historical design packages | real apply design, readiness v2, production lock lifecycle design, state safety, closeout/tracking docs | Design/prototype implemented | Design evidence does not enable real mutation |
+| Project status and CI coverage indexes | `docs/PROJECT_STATUS.md`, `docs/CI_COVERAGE_MAP.md`, capability ledger, roadmap | Documentation index implemented | Descriptive only; external GitHub rulesets/required checks remain enforcement |
 
 ## Known Gaps Before Any Real Mutation
 

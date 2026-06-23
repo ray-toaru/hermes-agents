@@ -10,6 +10,7 @@ New development agents should read these project-level design documents before c
 
 - `docs/EVIDENCE_BASELINE.md` — upstream Hermes evidence and derived AgentOps constraints.
 - `docs/PROJECT_DESIGN.md` — project goals, non-goals, system boundary, and current implementation status.
+- `docs/PROJECT_STATUS.md` — current baseline, implemented/deferred capability classes, blockers, and next safe slices.
 - `docs/ARCHITECTURE.md` — layers, components, and responsibility boundaries.
 - `docs/DOMAIN_MODEL.md` — core records and how they bind to each other.
 - `docs/STATE_MACHINE.md` — change/apply lifecycle states and allowed transitions.
@@ -20,6 +21,7 @@ New development agents should read these project-level design documents before c
 - `docs/PRODUCTION_LOCK_LIFECYCLE_DESIGN.md` — v2.9 design/prototype-only production lock lifecycle contract; this does not release production locks.
 - `docs/v2.10-production-lock-skeleton.md` — v2.10 disabled production lock acquire/preserve skeleton; this does not write lock files.
 - `docs/PRODUCTION_AUDIT_CAPTURE_DESIGN.md` — v2.11 design/prototype-only production audit-start contract; this does not write production audit records.
+- `docs/CI_COVERAGE_MAP.md` — current main and path-scoped CI coverage map for validating future changes.
 - `docs/OPERATIONS_AND_RECOVERY.md` — CI, ruleset, stale PR, stale lock, and future recovery handling.
 
 Architecture decisions that should not be repeatedly reopened are recorded under `docs/adr/`.
