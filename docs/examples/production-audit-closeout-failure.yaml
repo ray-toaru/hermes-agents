@@ -1,0 +1,11 @@
+schema_version: 1
+closeout_id: 20260608T000000Z_agentops-manager_0123456789_failure_closeout
+change_id: 20260608T000000Z_agentops-manager_0123456789
+outcome: failure
+start_ref: audit-start://20260608T000000Z_agentops-manager_0123456789
+completion_ref: null
+failure_ref: audit-failure://20260608T000000Z_agentops-manager_0123456789
+lock_guard_preserved: true
+release_allowed: false
+apply_authorized: false
+production_record_written: false
