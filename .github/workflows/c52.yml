@@ -1,0 +1,27 @@
+name: c52
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/c52.yml'
+      - 'schemas/stage-readiness-v7.schema.json'
+      - 'docs/examples/stage-readiness-v7.yaml'
+      - 'docs/P10_STAGE_READINESS_V7.md'
+      - 'tests/test_stage_readiness_v7.py'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml jsonschema pytest
+      - name: Run tests
+        run: |
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 timeout 120 pytest -q tests/test_stage_readiness_v7.py
